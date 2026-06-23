@@ -4,13 +4,13 @@
 import frappe
 from frappe import _, _dict
 
-from shopify_integration.ecommerce_integrations.doctype.ecommerce_integration_log.ecommerce_integration_log import (
-	create_log,
-)
 from shopify_integration.shopify.constants import (
 	MODULE_NAME,
 	OLD_SETTINGS_DOCTYPE,
 	SETTING_DOCTYPE,
+)
+from shopify_integration.shopify.doctype.ecommerce_integration_log.ecommerce_integration_log import (
+	create_log,
 )
 
 

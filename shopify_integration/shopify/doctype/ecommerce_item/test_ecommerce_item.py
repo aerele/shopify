@@ -4,7 +4,7 @@
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from shopify_integration.ecommerce_integrations.doctype.ecommerce_item import ecommerce_item
+from shopify_integration.shopify.doctype.ecommerce_item import ecommerce_item
 
 
 class TestEcommerceItem(IntegrationTestCase):

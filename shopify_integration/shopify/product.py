@@ -6,7 +6,6 @@ from frappe.utils import cint, cstr
 from frappe.utils.nestedset import get_root_of
 from shopify.resources import Product, Variant
 
-from shopify_integration.ecommerce_integrations.doctype.ecommerce_item import ecommerce_item
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import (
 	ITEM_SELLING_RATE_FIELD,
@@ -16,6 +15,7 @@ from shopify_integration.shopify.constants import (
 	SUPPLIER_ID_FIELD,
 	WEIGHT_TO_ERPNEXT_UOM_MAP,
 )
+from shopify_integration.shopify.doctype.ecommerce_item import ecommerce_item
 from shopify_integration.shopify.utils import create_shopify_log
 
 
