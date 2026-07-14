@@ -54,6 +54,7 @@
   "shopify_warehouse_mapping",
   "sync_old_orders_section",
   "sync_old_orders",
+  "sync_old_orders_any_state",
   "column_break_45",
   "old_orders_from",
   "old_orders_to",
@@ -294,18 +295,18 @@
    "label": "Sync Old Orders"
   },
   {
-   "depends_on": "eval:doc.sync_old_orders",
+   "depends_on": "eval:doc.sync_old_orders || doc.sync_old_orders_any_state",
    "fieldname": "old_orders_from",
    "fieldtype": "Datetime",
    "label": "From",
-   "mandatory_depends_on": "eval:doc.sync_old_orders"
+   "mandatory_depends_on": "eval:doc.sync_old_orders || doc.sync_old_orders_any_state"
   },
   {
-   "depends_on": "eval:doc.sync_old_orders",
+   "depends_on": "eval:doc.sync_old_orders || doc.sync_old_orders_any_state",
    "fieldname": "old_orders_to",
    "fieldtype": "Datetime",
    "label": "To",
-   "mandatory_depends_on": "eval:doc.sync_old_orders"
+   "mandatory_depends_on": "eval:doc.sync_old_orders || doc.sync_old_orders_any_state"
   },
   {
    "fieldname": "column_break_45",
@@ -387,12 +388,18 @@
    "fieldtype": "Link",
    "label": "Default Shipping Charges Account",
    "options": "Account"
+  },
+  {
+   "default": "0",
+   "fieldname": "sync_old_orders_any_state",
+   "fieldtype": "Check",
+   "label": "Sync Old Orders (Any State)"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2023-10-24 10:38:49.247431",
+ "modified": "2026-07-08 19:01:19.999402",
  "modified_by": "Administrator",
  "module": "Shopify",
  "name": "Shopify Setting",
@@ -409,6 +416,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],

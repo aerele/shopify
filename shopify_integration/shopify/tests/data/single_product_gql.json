@@ -1,0 +1,52 @@
+{
+  "data": {
+    "product": {
+      "id": "gid://shopify/Product/6732194021530",
+      "title": "Orange MePhone",
+      "descriptionHtml": "<p>Orange MePhone</p>",
+      "productType": "",
+      "vendor": "frappetest",
+      "featuredMedia": null,
+      "options": [
+        {"name": "Title", "values": ["Default Title"]}
+      ],
+      "metafield": null,
+      "variants": {
+        "edges": [
+          {
+            "node": {
+              "id": "gid://shopify/ProductVariant/39933951901850",
+              "title": "Default Title",
+              "sku": "MePHONE-002",
+              "price": "44000.00",
+              "inventoryQuantity": 0,
+              "selectedOptions": [
+                {"name": "Title", "value": "Default Title"}
+              ],
+              "inventoryItem": {
+                "id": "gid://shopify/InventoryItem/1",
+                "tracked": true,
+                "measurement": {"weight": {"value": 200.0, "unit": "GRAMS"}},
+                "inventoryLevels": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": "gid://shopify/InventoryLevel/1",
+                        "quantities": [{"name": "available", "quantity": 0}],
+                        "location": {
+                          "id": "gid://shopify/Location/62279942297",
+                          "name": "WH 1",
+                          "legacyResourceId": "62279942297"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

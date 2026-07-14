@@ -1,0 +1,476 @@
+{
+  "data": {
+    "product": {
+      "id": "gid://shopify/Product/6704435495065",
+      "title": "short t shirt",
+      "descriptionHtml": "<p>short t shirt</p>",
+      "productType": "shirt",
+      "vendor": "frappetest",
+      "featuredMedia": null,
+      "options": [
+        {
+          "name": "Size",
+          "values": [
+            "S",
+            "M",
+            "L"
+          ]
+        },
+        {
+          "name": "Color",
+          "values": [
+            "Red",
+            "Blue",
+            "Green"
+          ]
+        }
+      ],
+      "metafield": null,
+      "variants": {
+        "edges": [
+          {
+            "node": {
+              "id": "gid://shopify/ProductVariant/39845261443225",
+              "title": "S / Red",
+              "sku": "TSHIRT-001",
+              "price": "1000.00",
+              "inventoryQuantity": 0,
+              "selectedOptions": [
+                {
+                  "name": "Size",
+                  "value": "S"
+                },
+                {
+                  "name": "Color",
+                  "value": "Red"
+                }
+              ],
+              "inventoryItem": {
+                "id": "gid://shopify/InventoryItem/1",
+                "tracked": true,
+                "measurement": {
+                  "weight": {
+                    "value": 0.0,
+                    "unit": "KILOGRAMS"
+                  }
+                },
+                "inventoryLevels": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": "gid://shopify/InventoryLevel/1",
+                        "quantities": [
+                          {
+                            "name": "available",
+                            "quantity": 0
+                          }
+                        ],
+                        "location": {
+                          "id": "gid://shopify/Location/62279942297",
+                          "name": "WH 1",
+                          "legacyResourceId": "62279942297"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "node": {
+              "id": "gid://shopify/ProductVariant/39845261475993",
+              "title": "S / Blue",
+              "sku": "TSHIRT-002",
+              "price": "1000.00",
+              "inventoryQuantity": 0,
+              "selectedOptions": [
+                {
+                  "name": "Size",
+                  "value": "S"
+                },
+                {
+                  "name": "Color",
+                  "value": "Blue"
+                }
+              ],
+              "inventoryItem": {
+                "id": "gid://shopify/InventoryItem/2",
+                "tracked": true,
+                "measurement": {
+                  "weight": {
+                    "value": 0.0,
+                    "unit": "KILOGRAMS"
+                  }
+                },
+                "inventoryLevels": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": "gid://shopify/InventoryLevel/2",
+                        "quantities": [
+                          {
+                            "name": "available",
+                            "quantity": 0
+                          }
+                        ],
+                        "location": {
+                          "id": "gid://shopify/Location/62279942297",
+                          "name": "WH 1",
+                          "legacyResourceId": "62279942297"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "node": {
+              "id": "gid://shopify/ProductVariant/39845261508761",
+              "title": "S / Green",
+              "sku": "TSHIRT-003",
+              "price": "1000.00",
+              "inventoryQuantity": 0,
+              "selectedOptions": [
+                {
+                  "name": "Size",
+                  "value": "S"
+                },
+                {
+                  "name": "Color",
+                  "value": "Green"
+                }
+              ],
+              "inventoryItem": {
+                "id": "gid://shopify/InventoryItem/3",
+                "tracked": true,
+                "measurement": {
+                  "weight": {
+                    "value": 0.0,
+                    "unit": "KILOGRAMS"
+                  }
+                },
+                "inventoryLevels": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": "gid://shopify/InventoryLevel/3",
+                        "quantities": [
+                          {
+                            "name": "available",
+                            "quantity": 0
+                          }
+                        ],
+                        "location": {
+                          "id": "gid://shopify/Location/62279942297",
+                          "name": "WH 1",
+                          "legacyResourceId": "62279942297"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "node": {
+              "id": "gid://shopify/ProductVariant/39845261541529",
+              "title": "M / Red",
+              "sku": "TSHIRT-004",
+              "price": "1000.00",
+              "inventoryQuantity": 0,
+              "selectedOptions": [
+                {
+                  "name": "Size",
+                  "value": "M"
+                },
+                {
+                  "name": "Color",
+                  "value": "Red"
+                }
+              ],
+              "inventoryItem": {
+                "id": "gid://shopify/InventoryItem/4",
+                "tracked": true,
+                "measurement": {
+                  "weight": {
+                    "value": 0.0,
+                    "unit": "KILOGRAMS"
+                  }
+                },
+                "inventoryLevels": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": "gid://shopify/InventoryLevel/4",
+                        "quantities": [
+                          {
+                            "name": "available",
+                            "quantity": 0
+                          }
+                        ],
+                        "location": {
+                          "id": "gid://shopify/Location/62279942297",
+                          "name": "WH 1",
+                          "legacyResourceId": "62279942297"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "node": {
+              "id": "gid://shopify/ProductVariant/39845261574297",
+              "title": "M / Blue",
+              "sku": "TSHIRT-005",
+              "price": "1000.00",
+              "inventoryQuantity": 0,
+              "selectedOptions": [
+                {
+                  "name": "Size",
+                  "value": "M"
+                },
+                {
+                  "name": "Color",
+                  "value": "Blue"
+                }
+              ],
+              "inventoryItem": {
+                "id": "gid://shopify/InventoryItem/5",
+                "tracked": true,
+                "measurement": {
+                  "weight": {
+                    "value": 0.0,
+                    "unit": "KILOGRAMS"
+                  }
+                },
+                "inventoryLevels": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": "gid://shopify/InventoryLevel/5",
+                        "quantities": [
+                          {
+                            "name": "available",
+                            "quantity": 0
+                          }
+                        ],
+                        "location": {
+                          "id": "gid://shopify/Location/62279942297",
+                          "name": "WH 1",
+                          "legacyResourceId": "62279942297"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "node": {
+              "id": "gid://shopify/ProductVariant/39845261607065",
+              "title": "M / Green",
+              "sku": "TSHIRT-006",
+              "price": "1000.00",
+              "inventoryQuantity": 0,
+              "selectedOptions": [
+                {
+                  "name": "Size",
+                  "value": "M"
+                },
+                {
+                  "name": "Color",
+                  "value": "Green"
+                }
+              ],
+              "inventoryItem": {
+                "id": "gid://shopify/InventoryItem/6",
+                "tracked": true,
+                "measurement": {
+                  "weight": {
+                    "value": 0.0,
+                    "unit": "KILOGRAMS"
+                  }
+                },
+                "inventoryLevels": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": "gid://shopify/InventoryLevel/6",
+                        "quantities": [
+                          {
+                            "name": "available",
+                            "quantity": 0
+                          }
+                        ],
+                        "location": {
+                          "id": "gid://shopify/Location/62279942297",
+                          "name": "WH 1",
+                          "legacyResourceId": "62279942297"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "node": {
+              "id": "gid://shopify/ProductVariant/39845261639833",
+              "title": "L / Red",
+              "sku": "TSHIRT-007",
+              "price": "1000.00",
+              "inventoryQuantity": 0,
+              "selectedOptions": [
+                {
+                  "name": "Size",
+                  "value": "L"
+                },
+                {
+                  "name": "Color",
+                  "value": "Red"
+                }
+              ],
+              "inventoryItem": {
+                "id": "gid://shopify/InventoryItem/7",
+                "tracked": true,
+                "measurement": {
+                  "weight": {
+                    "value": 0.0,
+                    "unit": "KILOGRAMS"
+                  }
+                },
+                "inventoryLevels": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": "gid://shopify/InventoryLevel/7",
+                        "quantities": [
+                          {
+                            "name": "available",
+                            "quantity": 0
+                          }
+                        ],
+                        "location": {
+                          "id": "gid://shopify/Location/62279942297",
+                          "name": "WH 1",
+                          "legacyResourceId": "62279942297"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "node": {
+              "id": "gid://shopify/ProductVariant/39845261672601",
+              "title": "L / Blue",
+              "sku": "TSHIRT-008",
+              "price": "1000.00",
+              "inventoryQuantity": 0,
+              "selectedOptions": [
+                {
+                  "name": "Size",
+                  "value": "L"
+                },
+                {
+                  "name": "Color",
+                  "value": "Blue"
+                }
+              ],
+              "inventoryItem": {
+                "id": "gid://shopify/InventoryItem/8",
+                "tracked": true,
+                "measurement": {
+                  "weight": {
+                    "value": 0.0,
+                    "unit": "KILOGRAMS"
+                  }
+                },
+                "inventoryLevels": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": "gid://shopify/InventoryLevel/8",
+                        "quantities": [
+                          {
+                            "name": "available",
+                            "quantity": 0
+                          }
+                        ],
+                        "location": {
+                          "id": "gid://shopify/Location/62279942297",
+                          "name": "WH 1",
+                          "legacyResourceId": "62279942297"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "node": {
+              "id": "gid://shopify/ProductVariant/39845261705369",
+              "title": "L / Green",
+              "sku": "TSHIRT-009",
+              "price": "1000.00",
+              "inventoryQuantity": 0,
+              "selectedOptions": [
+                {
+                  "name": "Size",
+                  "value": "L"
+                },
+                {
+                  "name": "Color",
+                  "value": "Green"
+                }
+              ],
+              "inventoryItem": {
+                "id": "gid://shopify/InventoryItem/9",
+                "tracked": true,
+                "measurement": {
+                  "weight": {
+                    "value": 0.0,
+                    "unit": "KILOGRAMS"
+                  }
+                },
+                "inventoryLevels": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": "gid://shopify/InventoryLevel/9",
+                        "quantities": [
+                          {
+                            "name": "available",
+                            "quantity": 0
+                          }
+                        ],
+                        "location": {
+                          "id": "gid://shopify/Location/62279942297",
+                          "name": "WH 1",
+                          "legacyResourceId": "62279942297"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

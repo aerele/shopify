@@ -8,7 +8,7 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = ["ecommerce_core"]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
@@ -137,6 +137,12 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
+doc_events = {
+	"Item": {
+		"on_update": "shopify_integration.shopify.product.upload_erpnext_item",
+	},
+}
+
 # doc_events = {
 # 	"*": {
 # 		"on_update": "method",
@@ -147,6 +153,16 @@ app_license = "mit"
 
 # Scheduled Tasks
 # ---------------
+
+scheduler_events = {
+	"all": [
+		"shopify_integration.shopify.inventory.update_inventory_on_shopify",
+	],
+	"hourly": [
+		"shopify_integration.shopify.order.sync_old_orders",
+		"shopify_integration.shopify.order.sync_old_orders_any_state",
+	],
+}
 
 # scheduler_events = {
 # 	"all": [

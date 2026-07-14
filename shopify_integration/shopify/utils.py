@@ -9,7 +9,7 @@ from shopify_integration.shopify.constants import (
 	OLD_SETTINGS_DOCTYPE,
 	SETTING_DOCTYPE,
 )
-from shopify_integration.shopify.doctype.ecommerce_integration_log.ecommerce_integration_log import (
+from ecommerce_core.ecommerce_core.doctype.ecommerce_integration_log.ecommerce_integration_log import (
 	create_log,
 )
 

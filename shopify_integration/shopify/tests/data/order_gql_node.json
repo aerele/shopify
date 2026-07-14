@@ -1,0 +1,138 @@
+{
+  "id": "gid://shopify/Order/5678901234",
+  "name": "#1042",
+  "createdAt": "2026-06-01T10:00:00Z",
+  "updatedAt": "2026-06-01T12:00:00Z",
+  "processedAt": "2026-06-01T10:00:00Z",
+  "cancelledAt": null,
+  "closedAt": null,
+  "confirmed": true,
+  "test": false,
+  "displayFinancialStatus": "PAID",
+  "displayFulfillmentStatus": "FULFILLED",
+  "taxesIncluded": false,
+  "currencyCode": "USD",
+  "note": "GraphQL fixture order",
+  "tags": [],
+  "totalWeight": 500,
+  "totalPriceSet": { "presentmentMoney": { "amount": "120.00", "currencyCode": "USD" } },
+  "totalDiscountsSet": { "presentmentMoney": { "amount": "5.00", "currencyCode": "USD" } },
+  "currentSubtotalPriceSet": { "presentmentMoney": { "amount": "100.00", "currencyCode": "USD" } },
+  "totalTaxSet": { "presentmentMoney": { "amount": "15.00", "currencyCode": "USD" } },
+  "totalShippingPriceSet": { "presentmentMoney": { "amount": "10.00", "currencyCode": "USD" } },
+  "customer": {
+    "id": "gid://shopify/Customer/111",
+    "email": "buyer@example.com",
+    "firstName": "Test",
+    "lastName": "Buyer",
+    "phone": null,
+    "taxExempt": false,
+    "defaultAddress": null
+  },
+  "billingAddress": {
+    "firstName": "Test",
+    "lastName": "Buyer",
+    "address1": "1 Main St",
+    "city": "City",
+    "country": "United States",
+    "zip": "10001"
+  },
+  "shippingAddress": {
+    "firstName": "Test",
+    "lastName": "Buyer",
+    "address1": "1 Main St",
+    "city": "City",
+    "country": "United States",
+    "zip": "10001"
+  },
+  "shippingLines": {
+    "edges": [
+      {
+        "node": {
+          "id": "gid://shopify/ShippingLine/1",
+          "title": "Standard Shipping",
+          "code": "STANDARD",
+          "originalPriceSet": { "presentmentMoney": { "amount": "10.00", "currencyCode": "USD" } },
+          "discountedPriceSet": { "presentmentMoney": { "amount": "10.00", "currencyCode": "USD" } },
+          "taxLines": [
+            {
+              "title": "Shipping Tax",
+              "rate": 0.1,
+              "priceSet": { "presentmentMoney": { "amount": "1.00", "currencyCode": "USD" } }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "lineItems": {
+    "edges": [
+      {
+        "node": {
+          "id": "gid://shopify/LineItem/9001",
+          "name": "Sample Soap",
+          "quantity": 2,
+          "sku": "SOAP-01",
+          "vendor": "Test Vendor",
+          "taxable": true,
+          "originalUnitPriceSet": { "presentmentMoney": { "amount": "50.00", "currencyCode": "USD" } },
+          "currentQuantity": 2,
+          "fulfillableQuantity": 0,
+          "variant": {
+            "id": "gid://shopify/ProductVariant/8001",
+            "title": "Default",
+            "sku": "SOAP-01"
+          },
+          "product": { "id": "gid://shopify/Product/7001" },
+          "discountAllocations": [
+            {
+              "allocatedAmountSet": {
+                "presentmentMoney": { "amount": "5.00", "currencyCode": "USD" }
+              }
+            }
+          ],
+          "totalDiscountSet": { "presentmentMoney": { "amount": "5.00", "currencyCode": "USD" } },
+          "taxLines": [
+            {
+              "title": "State Tax",
+              "rate": 0.1,
+              "priceSet": { "presentmentMoney": { "amount": "9.50", "currencyCode": "USD" } }
+            }
+          ],
+          "fulfillmentService": { "serviceName": "manual", "type": "GIFT_CARD" }
+        }
+      }
+    ]
+  },
+  "fulfillments": [
+    {
+      "id": "gid://shopify/Fulfillment/3001",
+      "status": "SUCCESS",
+      "createdAt": "2026-06-01T11:00:00Z",
+      "updatedAt": "2026-06-01T11:00:00Z",
+      "location": {
+        "id": "gid://shopify/Location/55",
+        "legacyResourceId": "55",
+        "name": "Main Warehouse"
+      },
+      "trackingInfo": [{ "company": "UPS", "number": "1Z999", "url": null }],
+      "fulfillmentLineItems": {
+        "edges": [
+          {
+            "node": {
+              "id": "gid://shopify/FulfillmentLineItem/1",
+              "quantity": 2,
+              "lineItem": {
+                "id": "gid://shopify/LineItem/9001",
+                "name": "Sample Soap",
+                "sku": "SOAP-01",
+                "variant": { "id": "gid://shopify/ProductVariant/8001", "sku": "SOAP-01" },
+                "product": { "id": "gid://shopify/Product/7001" }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

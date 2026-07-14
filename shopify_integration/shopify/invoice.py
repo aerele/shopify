@@ -1,5 +1,6 @@
 import frappe
-from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice
+from erpnext.selling.doctype.sales_order.mapper import make_sales_invoice
+from frappe import _
 from frappe.utils import cint, cstr, getdate, nowdate
 
 from shopify_integration.shopify.constants import (
@@ -11,7 +12,7 @@ from shopify_integration.shopify.utils import create_shopify_log
 
 
 def prepare_sales_invoice(payload, request_id=None):
-	from shopify_integration.shopify.order import get_sales_order
+	from shopify_integration.shopify.order import create_sales_order, get_sales_order
 
 	order = payload
 
@@ -25,7 +26,15 @@ def prepare_sales_invoice(payload, request_id=None):
 			create_sales_invoice(order, setting, sales_order)
 			create_shopify_log(status="Success")
 		else:
-			create_shopify_log(status="Invalid", message="Sales Order not found for syncing sales invoice.")
+			sales_order = create_sales_order(order, setting)
+			if sales_order:
+				create_sales_invoice(order, setting, sales_order)
+				create_shopify_log(status="Success")
+			else:
+				create_shopify_log(
+					status="Invalid", message="Sales Order could not be created for syncing sales invoice."
+				)
+
 	except Exception as e:
 		create_shopify_log(status="Error", exception=e, rollback=True)
 
