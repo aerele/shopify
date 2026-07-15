@@ -35,9 +35,7 @@ shopify.ProductImporter = class {
 		});
 
 		this.syncRunning =
-			jobs.find(
-				(job) => job.job_name == "shopify.job.sync.all.products"
-			) !== undefined;
+			jobs.find((job) => job.job_name == "shopify.job.sync.all.products") !== undefined;
 
 		if (this.syncRunning) {
 			this.toggleSyncAllButton();
@@ -183,9 +181,7 @@ shopify.ProductImporter = class {
 				// 'Image': product.image && product.image.src && `<img style="height: 50px" src="${product.image.src}">`,
 				ID: product.id,
 				Name: product.title,
-				SKUs:
-					product.variants &&
-					product.variants.map((a) => `${a.sku}`).join(", "),
+				SKUs: product.variants && product.variants.map((a) => `${a.sku}`).join(", "),
 				Status: this.getProductSyncStatus(product.synced),
 				Action: !product.synced
 					? `<button type="button" class="btn btn-default btn-xs btn-sync mx-2" data-product="${product.id}"> Sync </button>`
@@ -257,9 +253,7 @@ shopify.ProductImporter = class {
 		});
 
 		// pagination
-		this.wrapper.on("click", ".btn-prev,.btn-next", (e) =>
-			this.switchPage(e)
-		);
+		this.wrapper.on("click", ".btn-prev,.btn-next", (e) => this.switchPage(e));
 
 		// sync all products
 		this.wrapper.on("click", "#btn-sync-all", (e) => this.syncAll(e));
@@ -330,10 +324,7 @@ shopify.ProductImporter = class {
 		}
 
 		// Fetch products
-		const newProducts = await this.fetchShopifyProducts(
-			cursor,
-			isNext ? "next" : "prev"
-		);
+		const newProducts = await this.fetchShopifyProducts(cursor, isNext ? "next" : "prev");
 		this.shopifyProductTable.refresh(newProducts);
 
 		// Re-enable buttons
@@ -366,25 +357,22 @@ shopify.ProductImporter = class {
 		const _syncedCounter = $("#count-products-synced");
 		const _erpnextCounter = $("#count-products-erpnext");
 
-		frappe.realtime.on(
-			"shopify.key.sync.all.products",
-			({ message, synced, done, error }) => {
-				message = `<pre class="mb-0">${message}</pre>`;
-				_log.append(message);
-				_log.scrollTop(_log[0].scrollHeight);
+		frappe.realtime.on("shopify.key.sync.all.products", ({ message, synced, done, error }) => {
+			message = `<pre class="mb-0">${message}</pre>`;
+			_log.append(message);
+			_log.scrollTop(_log[0].scrollHeight);
 
-				if (synced) {
-					this.updateSyncedCount(_syncedCounter, _erpnextCounter);
-				}
-
-				if (done) {
-					frappe.realtime.off("shopify.key.sync.all.products");
-					this.toggleSyncAllButton(false);
-					this.fetchProductCount();
-					this.syncRunning = false;
-				}
+			if (synced) {
+				this.updateSyncedCount(_syncedCounter, _erpnextCounter);
 			}
-		);
+
+			if (done) {
+				frappe.realtime.off("shopify.key.sync.all.products");
+				this.toggleSyncAllButton(false);
+				this.fetchProductCount();
+				this.syncRunning = false;
+			}
+		});
 	}
 
 	toggleSyncAllButton(disable = true) {

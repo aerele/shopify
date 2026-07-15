@@ -7,13 +7,13 @@ from unittest import result
 
 import frappe
 import requests
+from ecommerce_core.ecommerce_core.doctype.ecommerce_item import (
+	ecommerce_item,
+)
 from frappe import _
 from frappe.exceptions import UniqueValidationError
 from shopify import GraphQL
 
-from ecommerce_core.ecommerce_core.doctype.ecommerce_item import (
-	ecommerce_item,
-)
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import MODULE_NAME
 from shopify_integration.shopify.product import ShopifyProduct
@@ -286,6 +286,8 @@ def _resync_product(product):
 
 def is_synced(product):
 	return ecommerce_item.is_synced(MODULE_NAME, integration_item_code=product)
+
+
 @frappe.whitelist()
 def import_all_products():
 	frappe.enqueue(

@@ -116,6 +116,7 @@ class TestEcommerceCoreDependency(IntegrationTestCase):
 
 	def test_shopify_setting_uses_core_setting_controller(self):
 		from ecommerce_core.controllers.setting import SettingController
+
 		from shopify_integration.shopify.doctype.shopify_setting.shopify_setting import (
 			ShopifySetting,
 		)

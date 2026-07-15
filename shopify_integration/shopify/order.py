@@ -3,6 +3,8 @@ from typing import Literal, Optional
 
 import frappe
 import pytz
+from ecommerce_core.utils.price_list import get_dummy_price_list
+from ecommerce_core.utils.taxation import get_dummy_tax_category
 from frappe import _
 from frappe.utils import cint, cstr, flt, get_datetime, getdate, nowdate
 from shopify import GraphQL
@@ -24,8 +26,6 @@ from shopify_integration.shopify.product import (
 	get_item_code,
 )
 from shopify_integration.shopify.utils import create_shopify_log
-from ecommerce_core.utils.price_list import get_dummy_price_list
-from ecommerce_core.utils.taxation import get_dummy_tax_category
 
 DEFAULT_TAX_FIELDS = {
 	"sales_tax": "default_sales_tax_account",

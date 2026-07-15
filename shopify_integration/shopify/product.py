@@ -2,14 +2,14 @@ import json
 from typing import Optional
 
 import frappe
+from ecommerce_core.ecommerce_core.doctype.ecommerce_item import (
+	ecommerce_item,
+)
 from frappe import _, msgprint
 from frappe.utils import cint, cstr, flt
 from frappe.utils.nestedset import get_root_of
 from shopify import GraphQL
 
-from ecommerce_core.ecommerce_core.doctype.ecommerce_item import (
-	ecommerce_item,
-)
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import (
 	ITEM_SELLING_RATE_FIELD,

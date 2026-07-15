@@ -1,16 +1,16 @@
 import json
 
 import frappe
-from frappe import _
-from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
-from frappe.utils import get_datetime
-from shopify import GraphQL
-
 from ecommerce_core.controllers.setting import (
 	ERPNextWarehouse,
 	IntegrationWarehouse,
 	SettingController,
 )
+from frappe import _
+from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
+from frappe.utils import get_datetime
+from shopify import GraphQL
+
 from shopify_integration.shopify import connection
 from shopify_integration.shopify.constants import (
 	ADDRESS_ID_FIELD,
