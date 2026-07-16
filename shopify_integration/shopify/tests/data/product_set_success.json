@@ -1,0 +1,22 @@
+{
+  "data": {
+    "productSet": {
+      "product": {
+        "id": "gid://shopify/Product/999001",
+        "title": "ERPNext Uploaded Item",
+        "variants": {
+          "edges": [
+            {
+              "node": {
+                "id": "gid://shopify/ProductVariant/999002",
+                "sku": "ERP-ITEM-001",
+                "price": "10.00"
+              }
+            }
+          ]
+        }
+      },
+      "userErrors": []
+    }
+  }
+}
