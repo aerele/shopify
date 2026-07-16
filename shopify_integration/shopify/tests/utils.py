@@ -38,8 +38,17 @@ from shopify_integration.shopify.constants import API_VERSION, SETTING_DOCTYPE
 class TestCase(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
-		# Call parent first to auto-generate standard test records like _Test Company
 		super().setUpClass()
+
+		# Shopify Setting is a Single doctype, so IntegrationTestCase's automatic
+		# dependency-record generation (which only applies to non-Single doctypes)
+		# never walks its link fields. Explicitly ensure Customer's test records
+		# exist — generating them pulls in Company, Warehouse, Customer Group,
+		# and Account test fixtures too (_Test Company, _Test Warehouse - _TC,
+		# etc.), which the Shopify Setting test data below hard-codes references to.
+		from frappe.tests.utils import make_test_records
+
+		make_test_records("Customer")
 
 		# Now setup Shopify settings with test data
 		with patch(
