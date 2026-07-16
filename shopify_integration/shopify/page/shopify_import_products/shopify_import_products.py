@@ -1,12 +1,12 @@
 from time import process_time
 
 import frappe
+from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
 from frappe.exceptions import UniqueValidationError
 from shopify.resources import Product
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import MODULE_NAME
-from shopify_integration.shopify.doctype.ecommerce_item import ecommerce_item
 from shopify_integration.shopify.product import ShopifyProduct
 
 # constants
@@ -15,7 +15,7 @@ REALTIME_KEY = "shopify.key.sync.all.products"
 
 
 @frappe.whitelist()
-def get_shopify_products(from_=None):
+def get_shopify_products(from_: str | None = None):
 	shopify_products = fetch_all_products(from_)
 	return shopify_products
 
@@ -79,7 +79,7 @@ def get_shopify_product_count():
 
 
 @frappe.whitelist()
-def sync_product(product):
+def sync_product(product: str):
 	try:
 		shopify_product = ShopifyProduct(product)
 		shopify_product.sync_product()
@@ -91,7 +91,7 @@ def sync_product(product):
 
 
 @frappe.whitelist()
-def resync_product(product):
+def resync_product(product: str):
 	return _resync_product(product)
 
 
@@ -163,7 +163,7 @@ def queue_sync_all_products(*args, **kwargs):
 				continue
 
 		if collection.has_next_page():
-			frappe.db.commit()  # prevents too many write request error
+			frappe.db.commit()  # prevents too many write request error  # nosemgrep: frappe-manual-commit
 			collection = _fetch_products_from_shopify(from_=collection.next_page_url)
 		else:
 			_sync = False
@@ -182,4 +182,5 @@ def publish(message, synced=False, error=False, done=False, br=True):
 			"message": message + ("<br /><br />" if br else ""),
 			"done": done,
 		},
+		user=frappe.session.user,
 	)

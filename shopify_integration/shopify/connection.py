@@ -91,7 +91,10 @@ def get_callback_url() -> str:
 	return f"https://{url}/api/method/shopify_integration.shopify.connection.store_request_data"
 
 
-@frappe.whitelist(allow_guest=True)
+# Shopify calls this endpoint directly without a Frappe session; the HMAC
+# signature is verified below via _validate_request (constant-time compare)
+# before any data is processed.
+@frappe.whitelist(allow_guest=True)  # nosemgrep: security.guest-whitelisted-method
 def store_request_data() -> None:
 	if frappe.request:
 		hmac_header = frappe.get_request_header("X-Shopify-Hmac-Sha256")
