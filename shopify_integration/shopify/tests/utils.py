@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from unittest.mock import patch
@@ -111,6 +112,21 @@ class TestCase(IntegrationTestCase):
 		with open(os.path.dirname(__file__) + f"/data/{name}.{format}", "rb") as f:
 			return f.read()
 
+	def fake_graphql(self, resolver):
+		"""Mock `shopify.GraphQL().execute()` for GraphQL-based endpoints.
+
+		`resolver` is a callable `(query, variables) -> dict` that returns the
+		GraphQL response body (as a dict) for a given call; it's inspected
+		per-call so callers don't need to hard-code an exact call order.
+		"""
+
+		def side_effect(query, variables=None, operation_name=None):
+			return json.dumps(resolver(query, variables))
+
+		patcher = patch("shopify.GraphQL.execute", side_effect=side_effect)
+		self.addCleanup(patcher.stop)
+		return patcher.start()
+
 	def fake(self, endpoint, **kwargs):
 		body = kwargs.pop("body", None) or self.load_fixture(endpoint)
 		method = kwargs.pop("method", "GET")
@@ -147,3 +163,61 @@ class TestCase(IntegrationTestCase):
 			code=code,
 			response_headers=kwargs.pop("response_headers", None),
 		)
+
+
+REST_TO_GRAPHQL_WEIGHT_UNIT = {
+	"g": "GRAMS",
+	"kg": "KILOGRAMS",
+	"oz": "OUNCES",
+	"lb": "POUNDS",
+}
+
+
+def rest_variant_to_graphql_node(variant):
+	"""Convert a REST-shaped variant dict (as found in test fixtures) into the
+	GraphQL `ProductVariant` node shape our GraphQL queries/mutations consume."""
+	selected_options = []
+	for i in (1, 2, 3):
+		value = variant.get(f"option{i}")
+		if value:
+			selected_options.append({"name": f"option{i}", "value": value})
+
+	return {
+		"id": f"gid://shopify/ProductVariant/{variant['id']}",
+		"title": variant.get("title"),
+		"sku": variant.get("sku"),
+		"price": variant.get("price"),
+		"selectedOptions": selected_options,
+		"inventoryItem": {
+			"measurement": {
+				"weight": {
+					"value": variant.get("weight"),
+					"unit": REST_TO_GRAPHQL_WEIGHT_UNIT.get(variant.get("weight_unit")),
+				}
+			}
+		},
+	}
+
+
+def rest_product_to_graphql_node(product):
+	"""Convert a REST-shaped product dict (as found in test fixtures) into the
+	GraphQL `Product` node shape consumed by `product._fetch_shopify_product`
+	and the import-products page's paginated product queries."""
+	image = product.get("image")
+
+	return {
+		"id": f"gid://shopify/Product/{product['id']}",
+		"title": product.get("title"),
+		"descriptionHtml": product.get("body_html"),
+		"productType": product.get("product_type"),
+		"vendor": product.get("vendor"),
+		"featuredMedia": {"image": {"url": image.get("src")}} if image else None,
+		"options": [
+			{"name": opt.get("name"), "values": opt.get("values", [])} for opt in product.get("options", [])
+		],
+		"variants": {
+			"edges": [
+				{"node": rest_variant_to_graphql_node(variant)} for variant in product.get("variants", [])
+			]
+		},
+	}

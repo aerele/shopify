@@ -2,11 +2,10 @@ import json
 import os
 
 import frappe
-import shopify
 
 from shopify_integration.shopify.product import ShopifyProduct
 
-from ...tests.utils import TestCase
+from ...tests.utils import TestCase, rest_product_to_graphql_node
 from .shopify_import_products import queue_sync_all_products
 
 
@@ -56,12 +55,7 @@ class TestShopifyImportProducts(TestCase):
 			"6808929304623": ["40279220518959"],
 		}
 
-		# fake shopify endpoints
-		self.fake("products", body=self.load_fixture("bulk_products"), extension="json?limit=100")
-		self.fake("products/count", body='{"count": 10}')
-
-		for product in required_products:
-			self.fake_single_product_from_bulk(product)
+		self.fake_graphql(self._graphql_resolver)
 
 		queue_sync_all_products()
 
@@ -95,9 +89,26 @@ class TestShopifyImportProducts(TestCase):
 			self.assertEqual(len(created_ecom_variants), len(required_variants))
 			self.assertEqual(sorted(required_variants), sorted(created_ecom_variants))
 
-	def fake_single_product_from_bulk(self, product):
-		item = next(p for p in self._products if str(p["id"]) == product)
+	def _graphql_resolver(self, query, variables):
+		if "productsCount" in query:
+			return {"data": {"productsCount": {"count": len(self._products)}}}
 
-		product_json = json.dumps({"product": item})
+		if "product(id: $id)" in query:
+			product_id = variables["id"].split("/")[-1]
+			product = next(p for p in self._products if str(p["id"]) == product_id)
+			return {"data": {"product": rest_product_to_graphql_node(product)}}
 
-		self.fake(f"products/{product}", body=product_json)
+		# paginated product-list query
+		return {
+			"data": {
+				"products": {
+					"edges": [{"node": rest_product_to_graphql_node(p)} for p in self._products],
+					"pageInfo": {
+						"hasNextPage": False,
+						"hasPreviousPage": False,
+						"startCursor": None,
+						"endCursor": None,
+					},
+				}
+			}
+		}

@@ -1,16 +1,21 @@
 # Copyright (c) 2021, Frappe and Contributors
 # See LICENSE
 
+import json
+
 import frappe
 
-from shopify_integration.shopify.product import ShopifyProduct
+from shopify_integration.shopify.product import ShopifyProduct, _fetch_shopify_product
 
-from .utils import TestCase
+from .utils import TestCase, rest_product_to_graphql_node
 
 
 class TestProduct(TestCase):
 	def test_sync_single_product(self):
-		self.fake("products/6732194021530", body=self.load_fixture("single_product"))
+		product_data = json.loads(self.load_fixture("single_product"))
+		self.fake_graphql(
+			lambda query, variables: {"data": {"product": rest_product_to_graphql_node(product_data)}}
+		)
 
 		product = ShopifyProduct(product_id="6732194021530", variant_id="39933951901850")
 
@@ -26,7 +31,10 @@ class TestProduct(TestCase):
 		self.assertTrue(bool(ecommerce_item_exists))
 
 	def test_sync_product_with_variants(self):
-		self.fake("products/6704435495065", body=self.load_fixture("variant_product"))
+		product_data = json.loads(self.load_fixture("variant_product"))
+		self.fake_graphql(
+			lambda query, variables: {"data": {"product": rest_product_to_graphql_node(product_data)}}
+		)
 
 		product = ShopifyProduct(product_id="6704435495065")
 
@@ -64,6 +72,65 @@ class TestProduct(TestCase):
 		self.assertEqual(len(created_ecom_variants), 9)
 		self.assertEqual(sorted(required_variants), sorted(created_ecom_variants))
 
+	def test_sync_product_with_single_option(self):
+		"""Product with exactly 1 option (e.g. Color x N, no Size dimension)."""
+		products = json.loads(self.load_fixture("bulk_products"))["products"]
+		product_data = next(p for p in products if p["id"] == 6808928124975)
+		self.fake_graphql(
+			lambda query, variables: {"data": {"product": rest_product_to_graphql_node(product_data)}}
+		)
+
+		product = ShopifyProduct(product_id="6808928124975", has_variants=1)
+		product.sync_product()
+
+		self.assertTrue(product.is_synced())
+
+		item = product.get_erpnext_item()
+		self.assertTrue(bool(item.has_variants))
+
+		variants = frappe.db.get_list("Item", filters={"variant_of": item.name})
+		self.assertEqual(len(variants), 4)
+
+	def test_sync_product_with_two_single_valued_options(self):
+		"""Product with 2 options that each have exactly 1 value (e.g. Size: [OS], Color: [black])."""
+		products = json.loads(self.load_fixture("bulk_products"))["products"]
+		product_data = next(p for p in products if p["id"] == 6808929337391)
+		self.fake_graphql(
+			lambda query, variables: {"data": {"product": rest_product_to_graphql_node(product_data)}}
+		)
+
+		product = ShopifyProduct(product_id="6808929337391", has_variants=1)
+		product.sync_product()
+
+		self.assertTrue(product.is_synced())
+
+		item = product.get_erpnext_item()
+		self.assertTrue(bool(item.has_variants))
+
+		variants = frappe.db.get_list("Item", filters={"variant_of": item.name})
+		self.assertEqual(len(variants), 1)
+
+	def test_sync_product_with_mismatched_option_cardinality(self):
+		"""Product with 2 options where one has several values and the other has
+		exactly 1 (e.g. Size: [30,31,32,33,34,36], Color: [Sand]) — a common
+		real-world shape (single-colour product with size variants)."""
+		products = json.loads(self.load_fixture("bulk_products"))["products"]
+		product_data = next(p for p in products if p["id"] == 6808908169263)
+		self.fake_graphql(
+			lambda query, variables: {"data": {"product": rest_product_to_graphql_node(product_data)}}
+		)
+
+		product = ShopifyProduct(product_id="6808908169263", has_variants=1)
+		product.sync_product()
+
+		self.assertTrue(product.is_synced())
+
+		item = product.get_erpnext_item()
+		self.assertTrue(bool(item.has_variants))
+
+		variants = frappe.db.get_list("Item", filters={"variant_of": item.name})
+		self.assertEqual(len(variants), 6)
+
 	def test_variant_id_mapping(self):
 		template_item = make_item()
 		from erpnext.controllers.item_variant import create_variant
@@ -81,14 +148,17 @@ class TestProduct(TestCase):
 			template_item.item_code, {"Test Sync Size": "M", "Test Sync Colour": "Green"}
 		)
 
-		self.fake("products/6704435495065", body=self.load_fixture("variant_product"))
+		product_data = json.loads(self.load_fixture("variant_product"))
+		self.fake_graphql(
+			lambda query, variables: {"data": {"product": rest_product_to_graphql_node(product_data)}}
+		)
+
 		product = ShopifyProduct(product_id="6704435495065", has_variants=1)
 		product.sync_product()
 
 		self.assertTrue(product.is_synced())
-		from shopify.resources import Product
 
-		shopify_product = Product.find(product.product_id)
+		shopify_product = _fetch_shopify_product(product.product_id)
 
 		from shopify_integration.shopify.product import map_erpnext_variant_to_shopify_variant
 
