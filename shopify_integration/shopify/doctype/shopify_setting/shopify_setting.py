@@ -2,17 +2,17 @@
 # For license information, please see LICENSE
 
 import frappe
+from ecommerce_core.controllers.setting import (
+	ERPNextWarehouse,
+	IntegrationWarehouse,
+	SettingController,
+)
 from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 from frappe.utils import get_datetime
 from shopify.collection import PaginatedIterator
 from shopify.resources import Location
 
-from shopify_integration.controllers.setting import (
-	ERPNextWarehouse,
-	IntegrationWarehouse,
-	SettingController,
-)
 from shopify_integration.shopify import connection
 from shopify_integration.shopify.constants import (
 	ADDRESS_ID_FIELD,

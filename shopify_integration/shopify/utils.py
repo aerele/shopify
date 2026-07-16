@@ -2,15 +2,15 @@
 # For license information, please see LICENSE
 
 import frappe
+from ecommerce_core.ecommerce_core.doctype.ecommerce_integration_log.ecommerce_integration_log import (
+	create_log,
+)
 from frappe import _, _dict
 
 from shopify_integration.shopify.constants import (
 	MODULE_NAME,
 	OLD_SETTINGS_DOCTYPE,
 	SETTING_DOCTYPE,
-)
-from shopify_integration.shopify.doctype.ecommerce_integration_log.ecommerce_integration_log import (
-	create_log,
 )
 
 
@@ -39,12 +39,12 @@ def migrate_from_old_connector(payload=None, request_id=None):
 
 def ensure_old_connector_is_disabled():
 	try:
-		old_setting = frappe.get_doc(OLD_SETTINGS_DOCTYPE)
+		enable_shopify = frappe.db.get_single_value(OLD_SETTINGS_DOCTYPE, "enable_shopify")
 	except Exception:
 		frappe.clear_last_message()
 		return
 
-	if old_setting.enable_shopify:
+	if enable_shopify:
 		link = frappe.utils.get_link_to_form(OLD_SETTINGS_DOCTYPE, OLD_SETTINGS_DOCTYPE)
 		msg = _("Please disable old Shopify integration from {0} to proceed.").format(link)
 		frappe.throw(msg)
@@ -67,7 +67,7 @@ def _migrate_items_to_ecommerce_item(log):
 		log.save()
 		return
 
-	frappe.db.set_value(SETTING_DOCTYPE, SETTING_DOCTYPE, "is_old_data_migrated", 1)
+	frappe.db.set_single_value(SETTING_DOCTYPE, "is_old_data_migrated", 1)
 	log.status = "Success"
 	log.save()
 

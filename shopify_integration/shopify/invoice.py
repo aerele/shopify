@@ -15,7 +15,10 @@ def prepare_sales_invoice(payload, request_id=None):
 
 	order = payload
 
-	frappe.set_user("Administrator")
+	# Runs only as a webhook-dispatched background job (see EVENT_MAPPER /
+	# process_request's HMAC-validated dispatch), never in a request context
+	# with a logged-in user.
+	frappe.set_user("Administrator")  # nosemgrep: security.frappe-setuser
 	setting = frappe.get_doc(SETTING_DOCTYPE)
 	frappe.flags.request_id = request_id
 
