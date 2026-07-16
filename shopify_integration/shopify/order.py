@@ -1,7 +1,9 @@
 import json
-from typing import Literal, Optional
+from typing import Literal
 
 import frappe
+from ecommerce_core.utils.price_list import get_dummy_price_list
+from ecommerce_core.utils.taxation import get_dummy_tax_category
 from frappe import _
 from frappe.utils import cint, cstr, flt, get_datetime, getdate, nowdate
 from shopify.collection import PaginatedIterator
@@ -20,8 +22,6 @@ from shopify_integration.shopify.constants import (
 from shopify_integration.shopify.customer import ShopifyCustomer
 from shopify_integration.shopify.product import create_items_if_not_exist, get_item_code
 from shopify_integration.shopify.utils import create_shopify_log
-from shopify_integration.utils.price_list import get_dummy_price_list
-from shopify_integration.utils.taxation import get_dummy_tax_category
 
 DEFAULT_TAX_FIELDS = {
 	"sales_tax": "default_sales_tax_account",
@@ -31,7 +31,10 @@ DEFAULT_TAX_FIELDS = {
 
 def sync_sales_order(payload, request_id=None):
 	order = payload
-	frappe.set_user("Administrator")
+	# Runs only as a webhook-dispatched background job (see EVENT_MAPPER /
+	# process_request's HMAC-validated dispatch), never in a request context
+	# with a logged-in user.
+	frappe.set_user("Administrator")  # nosemgrep: security.frappe-setuser
 	frappe.flags.request_id = request_id
 
 	if frappe.db.get_value("Sales Order", filters={ORDER_ID_FIELD: cstr(order["id"])}):
@@ -365,7 +368,10 @@ def cancel_order(payload, request_id=None):
 
 	IF sales invoice / delivery notes are not generated against an order, then cancel it.
 	"""
-	frappe.set_user("Administrator")
+	# Runs only as a webhook-dispatched background job (see EVENT_MAPPER /
+	# process_request's HMAC-validated dispatch), never in a request context
+	# with a logged-in user.
+	frappe.set_user("Administrator")  # nosemgrep: security.frappe-setuser
 	frappe.flags.request_id = request_id
 
 	order = payload

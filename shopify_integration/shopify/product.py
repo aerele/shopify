@@ -1,6 +1,5 @@
-from typing import Optional
-
 import frappe
+from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
 from frappe import _, msgprint
 from frappe.utils import cint, cstr
 from frappe.utils.nestedset import get_root_of
@@ -15,7 +14,6 @@ from shopify_integration.shopify.constants import (
 	SUPPLIER_ID_FIELD,
 	WEIGHT_TO_ERPNEXT_UOM_MAP,
 )
-from shopify_integration.shopify.doctype.ecommerce_item import ecommerce_item
 from shopify_integration.shopify.utils import create_shopify_log
 
 
@@ -216,7 +214,10 @@ class ShopifyProduct:
 
 	def _get_supplier(self, product_dict):
 		if product_dict.get("vendor"):
-			supplier = frappe.db.sql(
+			# SUPPLIER_ID_FIELD is a fixed constant (custom fieldname), not user
+			# input; only the query values below are dynamic, and those are
+			# safely parameterized via %s.
+			supplier = frappe.db.sql(  # nosemgrep: security.frappe-sql-format-injection
 				f"""select name from tabSupplier
 				where name = %s or {SUPPLIER_ID_FIELD} = %s """,
 				(product_dict.get("vendor"), product_dict.get("vendor").lower()),

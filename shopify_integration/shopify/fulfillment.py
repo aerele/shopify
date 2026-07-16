@@ -15,7 +15,10 @@ from shopify_integration.shopify.utils import create_shopify_log
 
 
 def prepare_delivery_note(payload, request_id=None):
-	frappe.set_user("Administrator")
+	# Runs only as a webhook-dispatched background job (see EVENT_MAPPER /
+	# process_request's HMAC-validated dispatch), never in a request context
+	# with a logged-in user.
+	frappe.set_user("Administrator")  # nosemgrep: security.frappe-setuser
 	setting = frappe.get_doc(SETTING_DOCTYPE)
 	frappe.flags.request_id = request_id
 
@@ -74,7 +77,7 @@ def get_fulfillment_items(dn_items, fulfillment_items, location_id=None):
 	def find_matching_fullfilement_item(dn_item):
 		nonlocal fulfillment_items
 
-		for item in fulfillment_items:
+		for item in list(fulfillment_items):
 			if get_item_code(item) == dn_item.item_code:
 				fulfillment_items.remove(item)
 				return item

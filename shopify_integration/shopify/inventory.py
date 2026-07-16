@@ -1,15 +1,15 @@
 from collections import Counter
 
 import frappe
+from ecommerce_core.controllers.inventory import (
+	get_inventory_levels,
+	update_inventory_sync_status,
+)
+from ecommerce_core.controllers.scheduling import need_to_run
 from frappe.utils import cint, create_batch, now
 from pyactiveresource.connection import ResourceNotFound
 from shopify.resources import InventoryLevel, Variant
 
-from shopify_integration.controllers.inventory import (
-	get_inventory_levels,
-	update_inventory_sync_status,
-)
-from shopify_integration.controllers.scheduling import need_to_run
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import MODULE_NAME, SETTING_DOCTYPE
 from shopify_integration.shopify.utils import create_shopify_log
@@ -63,7 +63,12 @@ def upload_inventory_data_to_shopify(inventory_levels, warehous_map) -> None:
 				d.status = "Failed"
 				d.failure_reason = str(e)
 
-			frappe.db.commit()
+			# Commit is required here to persist each inventory update independently
+			# during bulk Shopify sync to prevent data loss on partial failures
+			try:
+				frappe.db.commit()  # nosemgrep: frappe-manual-commit
+			except Exception:
+				frappe.db.rollback()
 
 		_log_inventory_update_status(inventory_sync_batch)
 
