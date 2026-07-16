@@ -33,6 +33,7 @@ shopify.ProductImporter = class {
 		const jobs = await frappe.db.get_list("RQ Job", {
 			filters: { status: ("in", ("queued", "started")) },
 		});
+
 		this.syncRunning =
 			jobs.find((job) => job.job_name == "shopify.job.sync.all.products") !== undefined;
 
@@ -129,6 +130,7 @@ shopify.ProductImporter = class {
 				},
 				{
 					name: "Name",
+					align: "left",
 					editable: false,
 					focusable: false,
 				},
@@ -157,16 +159,23 @@ shopify.ProductImporter = class {
 		this.wrapper.find(".shopify-datatable-footer").show();
 	}
 
-	async fetchShopifyProducts(from_ = null) {
+	async fetchShopifyProducts(cursor = null, direction = "next") {
 		try {
 			const {
-				message: { products, nextUrl, prevUrl },
+				message: { products, nextCursor, prevCursor, pageInfo },
 			} = await frappe.call({
 				method: "shopify_integration.shopify.page.shopify_import_products.shopify_import_products.get_shopify_products",
-				args: { from_ },
+				args: { cursor, direction },
 			});
-			this.nextUrl = nextUrl;
-			this.prevUrl = prevUrl;
+			this.nextURL = nextCursor;
+			this.prevURL = prevCursor;
+
+			this.hasNextPage = pageInfo?.hasNextPage ?? false;
+			this.hasPreviousPage = pageInfo?.hasPreviousPage ?? false;
+
+			// Enable/disable buttons based on page info
+			$(".btn-next").prop("disabled", !this.hasNextPage);
+			$(".btn-prev").prop("disabled", !this.hasPreviousPage);
 
 			const shopifyProducts = products.map((product) => ({
 				// 'Image': product.image && product.image.src && `<img style="height: 50px" src="${product.image.src}">`,
@@ -278,12 +287,47 @@ shopify.ProductImporter = class {
 		$(".btn-paginate").prop("disabled", true);
 		this.shopifyProductTable.showToastMessage("Loading...");
 
-		const newProducts = await this.fetchShopifyProducts(
-			_this.hasClass("btn-next") ? this.nextUrl : this.prevUrl
-		);
+		const isNext = _this.hasClass("btn-next");
+		const cursor = isNext ? this.nextURL : this.prevURL;
 
+		// Prevent invalid navigation
+		if (isNext && !this.hasNextPage) {
+			this.shopifyProductTable.clearToastMessage();
+			frappe.show_alert({
+				message: __("No more next pages available."),
+				indicator: "orange",
+			});
+			$(".btn-next").prop("disabled", true);
+			$(".btn-paginate").prop("disabled", false);
+			return;
+		}
+
+		if (!isNext && !this.hasPreviousPage) {
+			this.shopifyProductTable.clearToastMessage();
+			frappe.show_alert({
+				message: __("No more previous pages available."),
+				indicator: "orange",
+			});
+			$(".btn-prev").prop("disabled", true);
+			$(".btn-paginate").prop("disabled", false);
+			return;
+		}
+
+		if (!cursor) {
+			this.shopifyProductTable.clearToastMessage();
+			frappe.show_alert({
+				message: __("No valid cursor available."),
+				indicator: "orange",
+			});
+			$(".btn-paginate").prop("disabled", false);
+			return;
+		}
+
+		// Fetch products
+		const newProducts = await this.fetchShopifyProducts(cursor, isNext ? "next" : "prev");
 		this.shopifyProductTable.refresh(newProducts);
 
+		// Re-enable buttons
 		$(".btn-paginate").prop("disabled", false);
 		this.shopifyProductTable.clearToastMessage();
 	}
@@ -318,7 +362,9 @@ shopify.ProductImporter = class {
 			_log.append(message);
 			_log.scrollTop(_log[0].scrollHeight);
 
-			if (synced) this.updateSyncedCount(_syncedCounter, _erpnextCounter);
+			if (synced) {
+				this.updateSyncedCount(_syncedCounter, _erpnextCounter);
+			}
 
 			if (done) {
 				frappe.realtime.off("shopify.key.sync.all.products");
@@ -333,12 +379,12 @@ shopify.ProductImporter = class {
 		const btn = $("#btn-sync-all");
 
 		const _toggleClass = (d) => (d ? "btn-success" : "btn-primary");
-		const _toggleText = () => (disable ? "Syncing..." : "Sync Products");
+		const _toggleText = (d) => (d ? "Syncing..." : "Sync Products");
 
 		btn.prop("disabled", disable)
 			.addClass(_toggleClass(disable))
 			.removeClass(_toggleClass(!disable))
-			.text(_toggleText());
+			.text(_toggleText(disable));
 	}
 
 	updateSyncedCount(_syncedCounter, _erpnextCounter) {

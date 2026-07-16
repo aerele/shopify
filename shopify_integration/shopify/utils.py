@@ -2,15 +2,15 @@
 # For license information, please see LICENSE
 
 import frappe
+from ecommerce_core.ecommerce_core.doctype.ecommerce_integration_log.ecommerce_integration_log import (
+	create_log,
+)
 from frappe import _, _dict
 
 from shopify_integration.shopify.constants import (
 	MODULE_NAME,
 	OLD_SETTINGS_DOCTYPE,
 	SETTING_DOCTYPE,
-)
-from shopify_integration.shopify.doctype.ecommerce_integration_log.ecommerce_integration_log import (
-	create_log,
 )
 
 
@@ -67,7 +67,7 @@ def _migrate_items_to_ecommerce_item(log):
 		log.save()
 		return
 
-	frappe.db.set_value(SETTING_DOCTYPE, SETTING_DOCTYPE, "is_old_data_migrated", 1)
+	frappe.db.set_single_value(SETTING_DOCTYPE, "is_old_data_migrated", 1)
 	log.status = "Success"
 	log.save()
 
