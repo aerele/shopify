@@ -157,16 +157,16 @@ shopify.ProductImporter = class {
 		this.wrapper.find(".shopify-datatable-footer").show();
 	}
 
-	async fetchShopifyProducts(from_ = null) {
+	async fetchShopifyProducts(cursor = null, direction = "next") {
 		try {
 			const {
-				message: { products, nextUrl, prevUrl },
+				message: { products, nextCursor, prevCursor },
 			} = await frappe.call({
 				method: "shopify_integration.shopify.page.shopify_import_products.shopify_import_products.get_shopify_products",
-				args: { from_ },
+				args: { cursor, direction },
 			});
-			this.nextUrl = nextUrl;
-			this.prevUrl = prevUrl;
+			this.nextCursor = nextCursor;
+			this.prevCursor = prevCursor;
 
 			const shopifyProducts = products.map((product) => ({
 				// 'Image': product.image && product.image.src && `<img style="height: 50px" src="${product.image.src}">`,
@@ -274,12 +274,14 @@ shopify.ProductImporter = class {
 
 	async switchPage({ currentTarget }) {
 		const _this = $(currentTarget);
+		const isNext = _this.hasClass("btn-next");
 
 		$(".btn-paginate").prop("disabled", true);
 		this.shopifyProductTable.showToastMessage("Loading...");
 
 		const newProducts = await this.fetchShopifyProducts(
-			_this.hasClass("btn-next") ? this.nextUrl : this.prevUrl
+			isNext ? this.nextCursor : this.prevCursor,
+			isNext ? "next" : "prev"
 		);
 
 		this.shopifyProductTable.refresh(newProducts);

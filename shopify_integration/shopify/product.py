@@ -1,18 +1,17 @@
-from typing import Optional
+import json
 
 import frappe
 from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
 from frappe import _, msgprint
 from frappe.utils import cint, cstr
 from frappe.utils.nestedset import get_root_of
-from shopify.resources import Product, Variant
+from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import (
 	ITEM_SELLING_RATE_FIELD,
 	MODULE_NAME,
 	SETTING_DOCTYPE,
-	SHOPIFY_VARIANTS_ATTR_LIST,
 	SUPPLIER_ID_FIELD,
 	WEIGHT_TO_ERPNEXT_UOM_MAP,
 )
@@ -56,8 +55,7 @@ class ShopifyProduct:
 	@temp_shopify_session
 	def sync_product(self):
 		if not self.is_synced():
-			shopify_product = Product.find(self.product_id)
-			product_dict = shopify_product.to_dict()
+			product_dict = _fetch_shopify_product(self.product_id)
 			self._make_item(product_dict)
 
 	def _make_item(self, product_dict):
@@ -134,7 +132,7 @@ class ShopifyProduct:
 			"sku": product_dict.get("sku") or _get_sku(product_dict),
 			"default_warehouse": warehouse,
 			"image": _get_item_image(product_dict),
-			"weight_uom": WEIGHT_TO_ERPNEXT_UOM_MAP[product_dict.get("weight_unit")],
+			"weight_uom": WEIGHT_TO_ERPNEXT_UOM_MAP.get(product_dict.get("weight_unit")),
 			"weight_per_unit": product_dict.get("weight"),
 			"default_supplier": self._get_supplier(product_dict),
 		}
@@ -176,12 +174,12 @@ class ShopifyProduct:
 					"weight": variant.get("weight"),
 				}
 
-				for i, variant_attr in enumerate(SHOPIFY_VARIANTS_ATTR_LIST):
-					if variant.get(variant_attr):
+				for i, selected_option in enumerate(variant.get("selected_options", [])):
+					if i < len(attributes) and selected_option.get("value"):
 						attributes[i].update(
 							{
 								"attribute_value": self._get_attribute_value(
-									variant.get(variant_attr), attributes[i]
+									selected_option["value"], attributes[i]
 								)
 							}
 						)
@@ -248,6 +246,94 @@ class ShopifyProduct:
 			).insert()
 			return supplier_group.name
 		return supplier_group
+
+
+@temp_shopify_session
+def _fetch_shopify_product(product_id: str) -> dict:
+	"""Fetch a Shopify product with its variants and options via GraphQL."""
+	query = """
+	query ($id: ID!) {
+	  product(id: $id) {
+	    id
+	    title
+	    descriptionHtml
+	    productType
+	    vendor
+	    featuredMedia {
+	      ... on MediaImage {
+	        image {
+	          url
+	        }
+	      }
+	    }
+	    options(first: 10) {
+	      name
+	      values
+	    }
+	    variants(first: 100) {
+	      edges {
+	        node {
+	          id
+	          title
+	          sku
+	          price
+	          selectedOptions {
+	            name
+	            value
+	          }
+	          inventoryItem {
+	            measurement {
+	              weight {
+	                value
+	                unit
+	              }
+	            }
+	          }
+	        }
+	      }
+	    }
+	  }
+	}
+	"""
+	product_gid = f"gid://shopify/Product/{product_id}"
+	response = GraphQL().execute(query, variables={"id": product_gid})
+	result = json.loads(response)
+	product = result.get("data", {}).get("product")
+
+	if not product:
+		frappe.throw(_("Shopify product {0} not found").format(product_id))
+
+	variants = []
+	for edge in product.get("variants", {}).get("edges", []):
+		node = edge.get("node", {})
+		weight = node.get("inventoryItem", {}).get("measurement", {}).get("weight") or {}
+		variants.append(
+			{
+				"id": node.get("id", "").split("/")[-1],
+				"title": node.get("title"),
+				"sku": node.get("sku"),
+				"price": node.get("price"),
+				"weight": weight.get("value"),
+				"weight_unit": weight.get("unit"),
+				"selected_options": node.get("selectedOptions", []),
+			}
+		)
+
+	featured_media = product.get("featuredMedia") or {}
+	image = featured_media.get("image")
+
+	return {
+		"id": product.get("id", "").split("/")[-1],
+		"title": product.get("title"),
+		"body_html": product.get("descriptionHtml"),
+		"product_type": product.get("productType"),
+		"vendor": product.get("vendor"),
+		"image": {"src": image.get("url")} if image else None,
+		"options": [
+			{"name": opt.get("name"), "values": opt.get("values", [])} for opt in product.get("options", [])
+		],
+		"variants": variants,
+	}
 
 
 def _add_weight_details(product_dict):
@@ -373,128 +459,146 @@ def upload_erpnext_item(doc, method=None):
 	is_new_product = not bool(product_id)
 
 	if is_new_product:
-		product = Product()
-		product.published = False
-		product.status = "active" if setting.sync_new_item_as_active else "draft"
-
-		map_erpnext_item_to_shopify(shopify_product=product, erpnext_item=template_item)
-		is_successful = product.save()
-
-		if is_successful:
+		product_input = map_erpnext_item_to_shopify(erpnext_item=template_item)
+		product_input["variants"] = [
 			update_default_variant_properties(
-				product,
+				template_item,
 				sku=template_item.item_code,
 				price=template_item.get(ITEM_SELLING_RATE_FIELD),
 				is_stock_item=template_item.is_stock_item,
 			)
-			if item.variant_of:
-				product.options = []
-				product.variants = []
-				variant_attributes = {
-					"title": template_item.item_name,
-					"sku": item.item_code,
-					"price": item.get(ITEM_SELLING_RATE_FIELD),
-				}
-				max_index_range = min(3, len(template_item.attributes))
-				for i in range(0, max_index_range):
-					attr = template_item.attributes[i]
-					product.options.append(
-						{
-							"name": attr.attribute,
-							"values": frappe.db.get_all(
+		]
+
+		if item.variant_of:
+			product_options = []
+			variant_attributes = {
+				"sku": item.item_code,
+				"price": item.get(ITEM_SELLING_RATE_FIELD),
+			}
+			max_index_range = min(3, len(template_item.attributes))
+			for i in range(0, max_index_range):
+				attr = template_item.attributes[i]
+				product_options.append(
+					{
+						"name": attr.attribute,
+						"values": [
+							{"name": v}
+							for v in frappe.db.get_all(
 								"Item Attribute Value", {"parent": attr.attribute}, pluck="attribute_value"
-							),
-						}
-					)
-					try:
-						variant_attributes[f"option{i+1}"] = item.attributes[i].attribute_value
-					except IndexError:
-						frappe.throw(
-							_("Shopify Error: Missing value for attribute {}").format(attr.attribute)
-						)
-				product.variants.append(Variant(variant_attributes))
+							)
+						],
+					}
+				)
+				try:
+					variant_attributes[f"option{i+1}"] = item.attributes[i].attribute_value
+				except IndexError:
+					frappe.throw(_("Shopify Error: Missing value for attribute {}").format(attr.attribute))
 
-			product.save()  # push variant
+			product_input["productOptions"] = product_options
+			product_input["variants"] = [
+				_build_variant_input(template_item, product_options, variant_attributes)
+			]
 
+		result = _shopify_product_set(product_input)
+		product = result["product"]
+		is_successful = result["success"]
+
+		if is_successful:
 			ecom_items = list(set([item, template_item]))
 			for d in ecom_items:
+				default_variant = (product.get("variants") or [{}])[0]
 				ecom_item = frappe.get_doc(
 					{
 						"doctype": "Ecommerce Item",
 						"erpnext_item_code": d.name,
 						"integration": MODULE_NAME,
-						"integration_item_code": str(product.id),
-						"variant_id": "" if d.has_variants else str(product.variants[0].id),
-						"sku": "" if d.has_variants else str(product.variants[0].sku),
+						"integration_item_code": str(product.get("id")),
+						"variant_id": "" if d.has_variants else str(default_variant.get("id") or ""),
+						"sku": "" if d.has_variants else str(default_variant.get("sku") or ""),
 						"has_variants": d.has_variants,
 						"variant_of": d.variant_of,
 					}
 				)
 				ecom_item.insert()
 
-		write_upload_log(status=is_successful, product=product, item=item)
+		write_upload_log(status=is_successful, product=product, item=item, errors=result["errors"])
 	elif setting.update_shopify_item_on_update:
-		product = Product.find(product_id)
-		if product:
-			map_erpnext_item_to_shopify(shopify_product=product, erpnext_item=template_item)
-			if not item.variant_of:
+		product_input = map_erpnext_item_to_shopify(erpnext_item=template_item)
+		product_input["id"] = f"gid://shopify/Product/{product_id}"
+
+		variant_attributes = None
+		if not item.variant_of:
+			product_input["variants"] = [
 				update_default_variant_properties(
-					product,
+					template_item,
 					is_stock_item=template_item.is_stock_item,
 					price=item.get(ITEM_SELLING_RATE_FIELD),
 				)
-			else:
-				variant_attributes = {"sku": item.item_code, "price": item.get(ITEM_SELLING_RATE_FIELD)}
-				product.options = []
-				max_index_range = min(3, len(template_item.attributes))
-				for i in range(0, max_index_range):
-					attr = template_item.attributes[i]
-					product.options.append(
-						{
-							"name": attr.attribute,
-							"values": frappe.db.get_all(
+			]
+		else:
+			variant_attributes = {"sku": item.item_code, "price": item.get(ITEM_SELLING_RATE_FIELD)}
+			product_options = []
+			max_index_range = min(3, len(template_item.attributes))
+			for i in range(0, max_index_range):
+				attr = template_item.attributes[i]
+				product_options.append(
+					{
+						"name": attr.attribute,
+						"values": [
+							{"name": v}
+							for v in frappe.db.get_all(
 								"Item Attribute Value", {"parent": attr.attribute}, pluck="attribute_value"
-							),
-						}
-					)
-					try:
-						variant_attributes[f"option{i+1}"] = item.attributes[i].attribute_value
-					except IndexError:
-						frappe.throw(
-							_("Shopify Error: Missing value for attribute {}").format(attr.attribute)
-						)
-				product.variants.append(Variant(variant_attributes))
+							)
+						],
+					}
+				)
+				try:
+					variant_attributes[f"option{i+1}"] = item.attributes[i].attribute_value
+				except IndexError:
+					frappe.throw(_("Shopify Error: Missing value for attribute {}").format(attr.attribute))
+			product_input["productOptions"] = product_options
 
-			is_successful = product.save()
-			if is_successful and item.variant_of:
-				map_erpnext_variant_to_shopify_variant(product, item, variant_attributes)
+		result = _shopify_product_set(product_input)
+		product = result["product"]
+		is_successful = result["success"]
 
-			write_upload_log(status=is_successful, product=product, item=item, action="Updated")
+		if is_successful and item.variant_of:
+			map_erpnext_variant_to_shopify_variant(product, item, variant_attributes)
+
+		write_upload_log(
+			status=is_successful, product=product, item=item, errors=result["errors"], action="Updated"
+		)
 
 
-def map_erpnext_variant_to_shopify_variant(shopify_product: Product, erpnext_item, variant_attributes):
+@temp_shopify_session
+def map_erpnext_variant_to_shopify_variant(shopify_product: dict, erpnext_item, variant_attributes: dict):
+	"""Match the ERPNext item variant to its Shopify variant using selected options.
+
+	Links the two via an `Ecommerce Item` and returns the matched Shopify variant id.
+	"""
 	variant_product_id = frappe.db.get_value(
 		"Ecommerce Item",
 		{"erpnext_item_code": erpnext_item.name, "integration": MODULE_NAME},
 		"integration_item_code",
 	)
 	if not variant_product_id:
-		for variant in shopify_product.variants:
-			if (
-				variant.option1 == variant_attributes.get("option1")
-				and variant.option2 == variant_attributes.get("option2")
-				and variant.option3 == variant_attributes.get("option3")
-			):
-				variant_product_id = str(variant.id)
+		option_values = [
+			variant_attributes.get(f"option{i}") for i in range(1, 4) if variant_attributes.get(f"option{i}")
+		]
+
+		for variant in shopify_product.get("variants", []):
+			selected_values = [opt.get("value") for opt in variant.get("selected_options", [])]
+			if selected_values == option_values:
+				variant_product_id = variant.get("id")
 				if not frappe.flags.in_test:
 					frappe.get_doc(
 						{
 							"doctype": "Ecommerce Item",
 							"erpnext_item_code": erpnext_item.name,
 							"integration": MODULE_NAME,
-							"integration_item_code": str(shopify_product.id),
+							"integration_item_code": str(shopify_product.get("id")),
 							"variant_id": variant_product_id,
-							"sku": str(variant.sku),
+							"sku": variant.get("sku"),
 							"variant_of": erpnext_item.variant_of,
 						}
 					).insert()
@@ -504,23 +608,29 @@ def map_erpnext_variant_to_shopify_variant(shopify_product: Product, erpnext_ite
 	return variant_product_id
 
 
-def map_erpnext_item_to_shopify(shopify_product: Product, erpnext_item):
-	"""Map erpnext fields to shopify, called both when updating and creating new products."""
+def map_erpnext_item_to_shopify(erpnext_item) -> dict:
+	"""Map erpnext fields to Shopify's `ProductSetInput`, for creating/updating products."""
 
-	shopify_product.title = erpnext_item.item_name
-	shopify_product.body_html = erpnext_item.description
-	shopify_product.product_type = erpnext_item.item_group
-
-	if erpnext_item.weight_uom in WEIGHT_TO_ERPNEXT_UOM_MAP.values():
-		# reverse lookup for key
-		uom = get_shopify_weight_uom(erpnext_weight_uom=erpnext_item.weight_uom)
-		shopify_product.weight = erpnext_item.weight_per_unit
-		shopify_product.weight_unit = uom
+	product_input = {
+		"title": erpnext_item.item_name,
+		"descriptionHtml": erpnext_item.description or erpnext_item.item_name,
+		"productType": erpnext_item.item_group,
+	}
 
 	if erpnext_item.disabled:
-		shopify_product.status = "draft"
-		shopify_product.published = False
+		product_input["status"] = "DRAFT"
 		msgprint(_("Status of linked Shopify product is changed to Draft."))
+
+	return product_input
+
+
+def _get_variant_weight(erpnext_item) -> dict | None:
+	if erpnext_item.weight_uom not in WEIGHT_TO_ERPNEXT_UOM_MAP.values():
+		return None
+	return {
+		"value": erpnext_item.weight_per_unit,
+		"unit": get_shopify_weight_uom(erpnext_weight_uom=erpnext_item.weight_uom),
+	}
 
 
 def get_shopify_weight_uom(erpnext_weight_uom: str) -> str:
@@ -530,44 +640,150 @@ def get_shopify_weight_uom(erpnext_weight_uom: str) -> str:
 
 
 def update_default_variant_properties(
-	shopify_product: Product,
+	template_item,
 	is_stock_item: bool,
 	sku: str | None = None,
 	price: float | None = None,
-):
-	"""Shopify creates default variant upon saving the product.
+) -> dict:
+	"""Build the default-variant input for Shopify's `productSet` mutation.
 
-	Some item properties are supposed to be updated on the default variant.
-	Input: saved shopify_product, sku and price
+	Shopify creates a "Default Title" variant for products without explicit
+	options; this fills in its SKU, price, weight, and inventory tracking.
 	"""
-	default_variant: Variant = shopify_product.variants[0]
+	variant = {"optionValues": [{"optionName": "Title", "name": "Default Title"}]}
 
-	# this will create Inventory item and qty will be updated by scheduled job.
-	if is_stock_item:
-		default_variant.inventory_management = "shopify"
-
-	if price is not None:
-		default_variant.price = price
 	if sku is not None:
-		default_variant.sku = sku
+		variant["sku"] = sku
+	if price is not None:
+		variant["price"] = str(price)
+
+	inventory_item = {}
+	if is_stock_item:
+		inventory_item["tracked"] = True
+
+	weight = _get_variant_weight(template_item)
+	if weight:
+		inventory_item["measurement"] = {"weight": weight}
+
+	if inventory_item:
+		variant["inventoryItem"] = inventory_item
+
+	return variant
 
 
-def write_upload_log(status: bool, product: Product, item, action="Created") -> None:
+def _build_variant_input(template_item, product_options: list, variant_attributes: dict) -> dict:
+	variant = {
+		"sku": variant_attributes.get("sku"),
+		"price": str(variant_attributes.get("price") or 0),
+		"optionValues": [
+			{"optionName": opt["name"], "name": variant_attributes.get(f"option{i+1}", "")}
+			for i, opt in enumerate(product_options)
+		],
+	}
+
+	weight = _get_variant_weight(template_item)
+	if weight:
+		variant["inventoryItem"] = {"measurement": {"weight": weight}}
+
+	return variant
+
+
+@temp_shopify_session
+def _shopify_product_set(product_input: dict) -> dict:
+	"""Create or update a Shopify product using the `productSet` mutation.
+
+	Returns a dict with `success`, `product` (normalized dict, or None on
+	failure), and `errors` (list of user-facing error messages).
+	"""
+	mutation = """
+	mutation ProductSet($input: ProductSetInput!) {
+	  productSet(synchronous: true, input: $input) {
+	    product {
+	      id
+	      title
+	      descriptionHtml
+	      productType
+	      status
+	      variants(first: 50) {
+	        edges {
+	          node {
+	            id
+	            sku
+	            price
+	            selectedOptions {
+	              name
+	              value
+	            }
+	            inventoryItem {
+	              id
+	            }
+	          }
+	        }
+	      }
+	    }
+	    userErrors {
+	      field
+	      message
+	    }
+	  }
+	}
+	"""
+	response = GraphQL().execute(mutation, variables={"input": product_input})
+	result = json.loads(response)
+
+	product_set = result.get("data", {}).get("productSet") or {}
+	user_errors = product_set.get("userErrors") or []
+	product = product_set.get("product")
+
+	if user_errors or not product:
+		return {
+			"success": False,
+			"product": None,
+			"errors": [e.get("message") for e in user_errors],
+		}
+
+	return {
+		"success": True,
+		"errors": [],
+		"product": {
+			"id": product.get("id", "").split("/")[-1],
+			"title": product.get("title"),
+			"body_html": product.get("descriptionHtml"),
+			"product_type": product.get("productType"),
+			"status": product.get("status"),
+			"variants": [
+				{
+					"id": edge.get("node", {}).get("id", "").split("/")[-1],
+					"sku": edge.get("node", {}).get("sku"),
+					"price": edge.get("node", {}).get("price"),
+					"selected_options": edge.get("node", {}).get("selectedOptions", []),
+					"inventory_item_id": edge.get("node", {}).get("inventoryItem", {}).get("id"),
+				}
+				for edge in product.get("variants", {}).get("edges", [])
+			],
+		},
+	}
+
+
+def write_upload_log(
+	status: bool, product: dict | None, item, errors: list | None = None, action="Created"
+) -> None:
 	if not status:
 		msg = _("Failed to upload item to Shopify") + "<br>"
-		msg += _("Shopify reported errors:") + " " + ", ".join(product.errors.full_messages())
+		if errors:
+			msg += _("Shopify reported errors:") + " " + ", ".join(errors)
 		msgprint(msg, title="Note", indicator="orange")
 
 		create_shopify_log(
 			status="Error",
-			request_data=product.to_dict(),
+			request_data=product or {},
 			message=msg,
 			method="upload_erpnext_item",
 		)
 	else:
 		create_shopify_log(
 			status="Success",
-			request_data=product.to_dict(),
-			message=f"{action} Item: {item.name}, shopify product: {product.id}",
+			request_data=product,
+			message=f"{action} Item: {item.name}, shopify product: {product.get('id')}",
 			method="upload_erpnext_item",
 		)

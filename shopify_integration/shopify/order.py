@@ -6,8 +6,7 @@ from ecommerce_core.utils.price_list import get_dummy_price_list
 from ecommerce_core.utils.taxation import get_dummy_tax_category
 from frappe import _
 from frappe.utils import cint, cstr, flt, get_datetime, getdate, nowdate
-from shopify.collection import PaginatedIterator
-from shopify.resources import Order
+from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import (
@@ -18,6 +17,7 @@ from shopify_integration.shopify.constants import (
 	ORDER_NUMBER_FIELD,
 	ORDER_STATUS_FIELD,
 	SETTING_DOCTYPE,
+	SHOPIFY_LINE_ITEM_ID_FIELD,
 )
 from shopify_integration.shopify.customer import ShopifyCustomer
 from shopify_integration.shopify.product import create_items_if_not_exist, get_item_code
@@ -166,6 +166,7 @@ def get_order_items(order_items, setting, delivery_date, taxes_inclusive):
 					ORDER_ITEM_DISCOUNT_FIELD: (
 						_get_total_discount(shopify_item) / cint(shopify_item.get("quantity"))
 					),
+					SHOPIFY_LINE_ITEM_ID_FIELD: str(shopify_item.get("id")),
 				}
 			)
 		else:
@@ -425,17 +426,269 @@ def sync_old_orders():
 	shopify_setting.save()
 
 
-def _fetch_old_orders(from_time, to_time):
-	"""Fetch all shopify orders in specified range and return an iterator on fetched orders."""
+def _fetch_old_orders(from_time, to_time, limit=50):
+	"""Fetch shopify orders in the given date range via GraphQL and yield them
+	as REST-webhook-shaped dicts, so downstream sync logic doesn't need to
+	special-case the order's origin."""
 
 	from_time = get_datetime(from_time).astimezone().isoformat()
 	to_time = get_datetime(to_time).astimezone().isoformat()
-	orders_iterator = PaginatedIterator(
-		Order.find(created_at_min=from_time, created_at_max=to_time, limit=250)
-	)
 
-	for orders in orders_iterator:
-		for order in orders:
+	query = """
+	query GetOrdersByDateRange($query: String!, $limit: Int!, $cursor: String) {
+	  orders(first: $limit, query: $query, after: $cursor) {
+	    edges {
+	      node {
+	        id
+	        name
+	        note
+	        createdAt
+	        cancelledAt
+	        taxesIncluded
+	        displayFinancialStatus
+	        customer {
+	          id
+	          firstName
+	          lastName
+	          email
+	          phone
+	        }
+	        billingAddress {
+	          address1
+	          address2
+	          city
+	          province
+	          country
+	          zip
+	          phone
+	        }
+	        shippingAddress {
+	          address1
+	          address2
+	          city
+	          province
+	          country
+	          zip
+	          phone
+	        }
+	        shippingLines(first: 10) {
+	          edges {
+	            node {
+	              title
+	              discountedPriceSet {
+	                shopMoney {
+	                  amount
+	                }
+	              }
+	              taxLines {
+	                title
+	                rate
+	                priceSet {
+	                  shopMoney {
+	                    amount
+	                  }
+	                }
+	              }
+	            }
+	          }
+	        }
+	        lineItems(first: 50) {
+	          edges {
+	            node {
+	              id
+	              name
+	              quantity
+	              sku
+	              taxable
+	              originalUnitPriceSet {
+	                shopMoney {
+	                  amount
+	                }
+	              }
+	              product {
+	                id
+	              }
+	              variant {
+	                id
+	              }
+	              discountAllocations {
+	                allocatedAmountSet {
+	                  shopMoney {
+	                    amount
+	                  }
+	                }
+	              }
+	              taxLines {
+	                title
+	                rate
+	                priceSet {
+	                  shopMoney {
+	                    amount
+	                  }
+	                }
+	              }
+	            }
+	          }
+	        }
+	        fulfillments(first: 10) {
+	          id
+	          createdAt
+	          location {
+	            id
+	          }
+	          fulfillmentLineItems(first: 50) {
+	            edges {
+	              node {
+	                quantity
+	                lineItem {
+	                  sku
+	                  product {
+	                    id
+	                  }
+	                  variant {
+	                    id
+	                  }
+	                }
+	              }
+	            }
+	          }
+	        }
+	      }
+	    }
+	    pageInfo {
+	      hasNextPage
+	      endCursor
+	    }
+	  }
+	}
+	"""
+
+	search_query = f'created_at:>="{from_time}" AND created_at:<="{to_time}"'
+	cursor = None
+	has_next_page = True
+
+	while has_next_page:
+		variables = {"query": search_query, "limit": limit, "cursor": cursor}
+		response = json.loads(GraphQL().execute(query, variables=variables))
+
+		if "errors" in response:
+			frappe.log_error(json.dumps(response["errors"], indent=2), "Shopify Order Fetch Error")
+			break
+
+		orders_data = response.get("data", {}).get("orders", {})
+
+		for edge in orders_data.get("edges", []):
 			# Using generator instead of fetching all at once is better for
 			# avoiding rate limits and reducing resource usage.
-			yield order.to_dict()
+			yield _normalize_order(edge.get("node", {}))
+
+		page_info = orders_data.get("pageInfo", {})
+		has_next_page = page_info.get("hasNextPage", False)
+		cursor = page_info.get("endCursor")
+
+
+def _gid_to_id(gid):
+	return gid.split("/")[-1] if gid else None
+
+
+def _money(money_set):
+	return ((money_set or {}).get("shopMoney") or {}).get("amount", "0.0")
+
+
+def _normalize_order(node):
+	customer = node.get("customer") or {}
+
+	line_items = []
+	for edge in node.get("lineItems", {}).get("edges", []):
+		item = edge.get("node", {})
+		product_id = _gid_to_id((item.get("product") or {}).get("id"))
+		variant_id = _gid_to_id((item.get("variant") or {}).get("id"))
+
+		line_items.append(
+			{
+				"id": _gid_to_id(item.get("id")),
+				"name": item.get("name"),
+				"title": item.get("name"),
+				"quantity": item.get("quantity"),
+				"sku": item.get("sku"),
+				"price": _money(item.get("originalUnitPriceSet")),
+				"taxable": item.get("taxable"),
+				"product_exists": bool(product_id),
+				"product_id": product_id,
+				"variant_id": variant_id,
+				"discount_allocations": [
+					{"amount": _money(a.get("allocatedAmountSet"))}
+					for a in item.get("discountAllocations", [])
+				],
+				"tax_lines": [
+					{"title": t.get("title"), "rate": t.get("rate"), "price": _money(t.get("priceSet"))}
+					for t in item.get("taxLines", [])
+				],
+			}
+		)
+
+	shipping_lines = []
+	for edge in node.get("shippingLines", {}).get("edges", []):
+		line = edge.get("node", {})
+		shipping_lines.append(
+			{
+				"title": line.get("title"),
+				"price": _money(line.get("discountedPriceSet")),
+				"discount_allocations": [],
+				"tax_lines": [
+					{"title": t.get("title"), "rate": t.get("rate"), "price": _money(t.get("priceSet"))}
+					for t in line.get("taxLines", [])
+				],
+			}
+		)
+
+	order_id = _gid_to_id(node.get("id"))
+	fulfillments = []
+	for fulfillment in node.get("fulfillments", []):
+		fulfillment_line_items = []
+		for edge in fulfillment.get("fulfillmentLineItems", {}).get("edges", []):
+			fli = edge.get("node", {})
+			line_item = fli.get("lineItem") or {}
+			fulfillment_line_items.append(
+				{
+					"quantity": fli.get("quantity"),
+					"sku": line_item.get("sku"),
+					"product_id": _gid_to_id((line_item.get("product") or {}).get("id")),
+					"variant_id": _gid_to_id((line_item.get("variant") or {}).get("id")),
+				}
+			)
+
+		fulfillments.append(
+			{
+				"id": _gid_to_id(fulfillment.get("id")),
+				"order_id": order_id,
+				"created_at": fulfillment.get("createdAt"),
+				"location_id": _gid_to_id((fulfillment.get("location") or {}).get("id")),
+				"line_items": fulfillment_line_items,
+			}
+		)
+
+	return {
+		"id": order_id,
+		"name": node.get("name"),
+		"note": node.get("note"),
+		"created_at": node.get("createdAt"),
+		"cancelled_at": node.get("cancelledAt"),
+		"taxes_included": node.get("taxesIncluded"),
+		# Normalized to lowercase to match the casing Shopify uses in its REST
+		# webhook payloads (the only other source of orders for this codebase),
+		# so `create_order`'s "paid" check works regardless of order origin.
+		"financial_status": (node.get("displayFinancialStatus") or "").lower(),
+		"customer": {
+			"id": _gid_to_id(customer.get("id")),
+			"first_name": customer.get("firstName"),
+			"last_name": customer.get("lastName"),
+			"email": customer.get("email"),
+			"phone": customer.get("phone"),
+		},
+		"billing_address": node.get("billingAddress") or {},
+		"shipping_address": node.get("shippingAddress") or {},
+		"line_items": line_items,
+		"shipping_lines": shipping_lines,
+		"fulfillments": fulfillments,
+	}

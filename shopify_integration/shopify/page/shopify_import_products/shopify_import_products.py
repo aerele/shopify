@@ -1,13 +1,15 @@
+import json
 from time import process_time
 
 import frappe
 from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
 from frappe.exceptions import UniqueValidationError
-from shopify.resources import Product
+from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import MODULE_NAME
 from shopify_integration.shopify.product import ShopifyProduct
+from shopify_integration.shopify.utils import create_shopify_log
 
 # constants
 SYNC_JOB_NAME = "shopify.job.sync.all.products"
@@ -15,45 +17,150 @@ REALTIME_KEY = "shopify.key.sync.all.products"
 
 
 @frappe.whitelist()
-def get_shopify_products(from_: str | None = None):
-	shopify_products = fetch_all_products(from_)
+def get_shopify_products(cursor: str | None = None, direction: str = "next"):
+	shopify_products = fetch_all_products(cursor=cursor, direction=direction)
 	return shopify_products
 
 
-def fetch_all_products(from_=None):
-	# format shopify collection for datatable
+def fetch_all_products(cursor=None, direction="next"):
+	"""Fetch paginated Shopify products."""
 
-	collection = _fetch_products_from_shopify(from_)
+	response = _fetch_products_from_shopify(cursor=cursor, direction=direction)
+	products_data = response.get("products", [])
+	page_info = response.get("pageInfo", {})
 
 	products = []
-	for product in collection:
-		d = product.to_dict()
-		d["synced"] = is_synced(product.id)
-		products.append(d)
 
-	next_url = None
-	if collection.has_next_page():
-		next_url = collection.next_page_url
-
-	prev_url = None
-	if collection.has_previous_page():
-		prev_url = collection.previous_page_url
+	for product in products_data:
+		product["synced"] = is_synced(product["id"])
+		products.append(product)
 
 	return {
 		"products": products,
-		"nextUrl": next_url,
-		"prevUrl": prev_url,
+		"nextCursor": page_info.get("endCursor"),
+		"prevCursor": page_info.get("startCursor"),
+		"pageInfo": {
+			"hasNextPage": page_info.get("hasNextPage", False),
+			"hasPreviousPage": page_info.get("hasPreviousPage", False),
+		},
 	}
 
 
 @temp_shopify_session
-def _fetch_products_from_shopify(from_=None, limit=20):
-	if from_:
-		collection = Product.find(from_=from_)
-	else:
-		collection = Product.find(limit=limit)
+def _fetch_products_from_shopify(cursor=None, direction="next", limit=20):
+	"""
+	Fetch products from Shopify with bidirectional pagination (forward/backward).
 
-	return collection
+	Args:
+	    cursor (str): Cursor for pagination.
+	    direction (str): 'next' for forward, 'prev' for backward pagination.
+	    limit (int): Number of products per page.
+
+	Returns:
+	    dict: {
+	        "products": [...],
+	        "pageInfo": {
+	            "hasNextPage": bool,
+	            "hasPreviousPage": bool,
+	            "startCursor": str,
+	            "endCursor": str
+	        }
+	    }
+	"""
+
+	if direction == "prev":
+		query = """
+        query ($last: Int!, $before: String) {
+          products(last: $last, before: $before) {
+            edges {
+              cursor
+              node {
+                id
+                title
+                variants(first: 100) {
+                  edges {
+                    node {
+                      id
+                      title
+                      sku
+                    }
+                  }
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+              hasPreviousPage
+              startCursor
+              endCursor
+            }
+          }
+        }
+        """
+		variables = {"last": limit, "before": cursor if cursor else None}
+	else:
+		query = """
+        query ($first: Int!, $after: String) {
+          products(first: $first, after: $after) {
+            edges {
+              cursor
+              node {
+                id
+                title
+                variants(first: 100) {
+                  edges {
+                    node {
+                      id
+                      title
+                      sku
+                    }
+                  }
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+              hasPreviousPage
+              startCursor
+              endCursor
+            }
+          }
+        }
+        """
+		variables = {"first": limit, "after": cursor if cursor else None}
+
+	response = GraphQL().execute(query, variables=variables)
+	response_dict = json.loads(response)
+	products_data = response_dict.get("data", {}).get("products", {})
+
+	edges = products_data.get("edges", [])
+	products = []
+
+	for edge in edges:
+		node = edge.get("node", {})
+
+		product_id = node.get("id", "").split("/")[-1]
+
+		variants = []
+		for v in node.get("variants", {}).get("edges", []):
+			variant_node = v.get("node", {})
+			variant_id = variant_node.get("id", "").split("/")[-1]
+			variants.append(
+				{
+					"id": variant_id,
+					"title": variant_node.get("title"),
+					"sku": variant_node.get("sku"),
+				}
+			)
+
+		products.append({"id": product_id, "title": node.get("title"), "variants": variants})
+
+	page_info = products_data.get("pageInfo", {})
+
+	return {
+		"products": products,
+		"pageInfo": page_info,
+	}
 
 
 @frappe.whitelist()
@@ -75,7 +182,16 @@ def get_product_count():
 
 @temp_shopify_session
 def get_shopify_product_count():
-	return Product.count()
+	query = """
+    query {
+      productsCount {
+        count
+      }
+    }
+    """
+	response = GraphQL().execute(query)
+	result = json.loads(response)
+	return result.get("data", {}).get("productsCount", {}).get("count", 0)
 
 
 @frappe.whitelist()
@@ -99,11 +215,34 @@ def resync_product(product: str):
 def _resync_product(product):
 	savepoint = "shopify_resync_product"
 	try:
-		item = Product.find(product)
+		query = """
+        query($id: ID!) {
+          product(id: $id) {
+            id
+            variants(first: 250) {
+              edges {
+                node {
+                  id
+                  legacyResourceId
+                }
+              }
+            }
+          }
+        }
+        """
+		product_gid = f"gid://shopify/Product/{product}"
+		response = GraphQL().execute(query, variables={"id": product_gid})
+		result = json.loads(response)
+		product_data = result.get("data", {}).get("product")
+
+		if not product_data:
+			raise frappe.DoesNotExistError(f"Shopify product {product} not found")
 
 		frappe.db.savepoint(savepoint)
-		for variant in item.variants:
-			shopify_product = ShopifyProduct(product, variant_id=variant.id)
+		for edge in product_data.get("variants", {}).get("edges", []):
+			variant_node = edge.get("node", {})
+			variant_id = variant_node.get("legacyResourceId") or variant_node.get("id", "").split("/")[-1]
+			shopify_product = ShopifyProduct(product, variant_id=variant_id)
 			shopify_product.sync_product()
 
 		return True
@@ -133,43 +272,55 @@ def queue_sync_all_products(*args, **kwargs):
 	publish("Syncing all products...")
 
 	if counts["shopifyCount"] < counts["syncedCount"]:
-		publish("⚠ Shopify has less products than ERPNext.")
+		publish("Shopify has less products than ERPNext.")
 
 	_sync = True
-	collection = _fetch_products_from_shopify(limit=100)
+	cursor = None
 	savepoint = "shopify_product_sync"
 	while _sync:
-		for product in collection:
+		response = _fetch_products_from_shopify(cursor=cursor, limit=100)
+		products = response.get("products", [])
+		page_info = response.get("pageInfo", {})
+
+		for product in products:
+			product_id = product["id"]
 			try:
-				publish(f"Syncing product {product.id}", br=False)
+				publish(f"Syncing product {product_id}", br=False)
 				frappe.db.savepoint(savepoint)
-				if is_synced(product.id):
-					publish(f"Product {product.id} already synced. Skipping...")
+				if is_synced(product_id):
+					publish(f"Product {product_id} already synced. Skipping...")
 					continue
 
-				shopify_product = ShopifyProduct(product.id)
+				shopify_product = ShopifyProduct(product_id)
 				shopify_product.sync_product()
 
-				publish(f"✅ Synced Product {product.id}", synced=True)
+				publish(f"Synced Product {product_id}", synced=True)
 
 			except UniqueValidationError as e:
-				publish(f"❌ Error Syncing Product {product.id} : {e!s}", error=True)
+				publish(f"Error Syncing Product {product_id} : {e!s}", error=True)
 				frappe.db.rollback(save_point=savepoint)
 				continue
 
 			except Exception as e:
-				publish(f"❌ Error Syncing Product {product.id} : {e!s}", error=True)
+				publish(f"Error Syncing Product {product_id} : {e!s}", error=True)
 				frappe.db.rollback(save_point=savepoint)
 				continue
 
-		if collection.has_next_page():
+		if page_info.get("hasNextPage"):
 			frappe.db.commit()  # prevents too many write request error  # nosemgrep: frappe-manual-commit
-			collection = _fetch_products_from_shopify(from_=collection.next_page_url)
+			cursor = page_info.get("endCursor")
 		else:
 			_sync = False
 
 	end_time = process_time()
-	publish(f"🎉 Done in {end_time - start_time}s", done=True)
+	duration = end_time - start_time
+	publish(f"Done in {duration}s", done=True)
+
+	create_shopify_log(
+		method="queue_sync_all_products",
+		status="Success",
+		message=f"Synced all products in {duration}s",
+	)
 	return True
 
 

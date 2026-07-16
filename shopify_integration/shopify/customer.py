@@ -28,7 +28,7 @@ class ShopifyCustomer(EcommerceCustomer):
 		customer_group = self.setting.customer_group
 		super().sync_customer(customer_name, customer_group)
 
-		billing_address = customer.get("billing_address", {}) or customer.get("default_address")
+		billing_address = customer.get("billing_address", {}) or customer.get("defaultAddress")
 		shipping_address = customer.get("shipping_address", {})
 
 		if billing_address:
@@ -54,7 +54,7 @@ class ShopifyCustomer(EcommerceCustomer):
 		super().create_customer_address(address_fields)
 
 	def update_existing_addresses(self, customer):
-		billing_address = customer.get("billing_address", {}) or customer.get("default_address")
+		billing_address = customer.get("billing_address", {}) or customer.get("defaultAddress")
 		shipping_address = customer.get("shipping_address", {})
 
 		customer_name = cstr(customer.get("first_name")) + " " + cstr(customer.get("last_name"))
@@ -98,7 +98,7 @@ class ShopifyCustomer(EcommerceCustomer):
 		if shopify_customer.get("email"):
 			contact_fields["email_ids"] = [{"email_id": shopify_customer.get("email"), "is_primary": True}]
 
-		phone_no = shopify_customer.get("phone") or shopify_customer.get("default_address", {}).get("phone")
+		phone_no = shopify_customer.get("phone") or shopify_customer.get("defaultAddress", {}).get("phone")
 
 		if validate_phone_number(phone_no, throw=False):
 			contact_fields["phone_nos"] = [{"phone": phone_no, "is_primary_phone": True}]

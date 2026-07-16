@@ -1,3 +1,4 @@
+import json
 from collections import Counter
 
 import frappe
@@ -8,7 +9,7 @@ from ecommerce_core.controllers.inventory import (
 from ecommerce_core.controllers.scheduling import need_to_run
 from frappe.utils import cint, create_batch, now
 from pyactiveresource.connection import ResourceNotFound
-from shopify.resources import InventoryLevel, Variant
+from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import MODULE_NAME, SETTING_DOCTYPE
@@ -44,15 +45,110 @@ def upload_inventory_data_to_shopify(inventory_levels, warehous_map) -> None:
 			d.shopify_location_id = warehous_map[d.warehouse]
 
 			try:
-				variant = Variant.find(d.variant_id)
-				inventory_id = variant.inventory_item_id
+				variant_query = """
+                query($id: ID!) {
+                  productVariant(id: $id) {
+                    id
+                    inventoryItem {
+                      id
+                      legacyResourceId
+                    }
+                  }
+                }
+                """
 
-				InventoryLevel.set(
-					location_id=d.shopify_location_id,
-					inventory_item_id=inventory_id,
-					# shopify doesn't support fractional quantity
-					available=cint(d.actual_qty) - cint(d.reserved_qty),
+				variant_gid = f"gid://shopify/ProductVariant/{d.variant_id}"
+				variant_response = GraphQL().execute(variant_query, variables={"id": variant_gid})
+				variant_result = json.loads(variant_response)
+
+				variant_data = variant_result.get("data", {}).get("productVariant")
+				if not variant_data:
+					raise ResourceNotFound("Variant not found")
+				inventory_item_gid = variant_data.get("inventoryItem", {}).get("id")
+
+				location_gid = f"gid://shopify/Location/{d.shopify_location_id}"
+
+				activate_mutation = """
+                mutation($inventoryItemId: ID!, $locationId: ID!) {
+                  inventoryActivate(
+                    inventoryItemId: $inventoryItemId
+                    locationId: $locationId
+                  ) {
+                    inventoryLevel {
+                      id
+                    }
+                    userErrors {
+                      field
+                      message
+                    }
+                  }
+                }
+                """
+
+				activate_response = GraphQL().execute(
+					activate_mutation,
+					variables={
+						"inventoryItemId": inventory_item_gid,
+						"locationId": location_gid,
+					},
 				)
+				activate_result = json.loads(activate_response)
+
+				activate_errors = (
+					activate_result.get("data", {}).get("inventoryActivate", {}).get("userErrors", [])
+				)
+				if activate_errors:
+					error_messages = [err.get("message") for err in activate_errors]
+					raise Exception("; ".join(error_messages))
+
+				inventory_mutation = """
+                mutation($inventoryItemId: ID!, $locationId: ID!, $available: Int!) {
+                  inventorySetQuantities(
+                    input: {
+                      reason: "correction"
+                      name: "available"
+                      ignoreCompareQuantity: true
+                      quantities: [
+                        {
+                          inventoryItemId: $inventoryItemId
+                          locationId: $locationId
+                          quantity: $available
+                        }
+                      ]
+                    }
+                  ) {
+                    inventoryAdjustmentGroup {
+                      id
+                      reason
+                    }
+                    userErrors {
+                      field
+                      message
+                    }
+                  }
+                }
+                """
+
+				# shopify doesn't support fractional quantity
+				available_qty = cint(d.actual_qty) - cint(d.reserved_qty)
+
+				mutation_response = GraphQL().execute(
+					inventory_mutation,
+					variables={
+						"inventoryItemId": inventory_item_gid,
+						"locationId": location_gid,
+						"available": available_qty,
+					},
+				)
+				mutation_result = json.loads(mutation_response)
+
+				user_errors = (
+					mutation_result.get("data", {}).get("inventorySetQuantities", {}).get("userErrors", [])
+				)
+				if user_errors:
+					error_messages = [err.get("message") for err in user_errors]
+					raise Exception("; ".join(error_messages))
+
 				update_inventory_sync_status(d.ecom_item, time=synced_on)
 				d.status = "Success"
 			except ResourceNotFound:
