@@ -2,6 +2,8 @@ import json
 from typing import Literal, Optional
 
 import frappe
+from ecommerce_core.utils.price_list import get_dummy_price_list
+from ecommerce_core.utils.taxation import get_dummy_tax_category
 from frappe import _
 from frappe.utils import cint, cstr, flt, get_datetime, getdate, nowdate
 from shopify.collection import PaginatedIterator
@@ -20,8 +22,6 @@ from shopify_integration.shopify.constants import (
 from shopify_integration.shopify.customer import ShopifyCustomer
 from shopify_integration.shopify.product import create_items_if_not_exist, get_item_code
 from shopify_integration.shopify.utils import create_shopify_log
-from shopify_integration.utils.price_list import get_dummy_price_list
-from shopify_integration.utils.taxation import get_dummy_tax_category
 
 DEFAULT_TAX_FIELDS = {
 	"sales_tax": "default_sales_tax_account",

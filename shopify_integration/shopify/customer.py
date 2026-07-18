@@ -1,10 +1,10 @@
 from typing import Any
 
 import frappe
+from ecommerce_core.controllers.customer import EcommerceCustomer
 from frappe import _
 from frappe.utils import cstr, validate_phone_number
 
-from shopify_integration.controllers.customer import EcommerceCustomer
 from shopify_integration.shopify.constants import (
 	ADDRESS_ID_FIELD,
 	CUSTOMER_ID_FIELD,
