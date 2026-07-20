@@ -1,3 +1,4 @@
+import json
 from collections import Counter
 
 import frappe
@@ -7,12 +8,15 @@ from ecommerce_core.controllers.inventory import (
 )
 from ecommerce_core.controllers.scheduling import need_to_run
 from frappe.utils import cint, create_batch, now
-from pyactiveresource.connection import ResourceNotFound
-from shopify.resources import InventoryLevel, Variant
+from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import MODULE_NAME, SETTING_DOCTYPE
 from shopify_integration.shopify.utils import create_shopify_log
+
+
+class _VariantNotFound(Exception):
+	"""Raised when a Shopify product variant no longer exists."""
 
 
 def update_inventory_on_shopify() -> None:
@@ -35,6 +39,46 @@ def update_inventory_on_shopify() -> None:
 		upload_inventory_data_to_shopify(inventory_levels, warehous_map)
 
 
+_VARIANT_INVENTORY_ITEM_QUERY = """
+query productVariant($id: ID!) {
+	productVariant(id: $id) {
+		id
+		inventoryItem {
+			id
+		}
+	}
+}
+"""
+
+_INVENTORY_ACTIVATE_MUTATION = """
+mutation inventoryActivate($inventoryItemId: ID!, $locationId: ID!) {
+	inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId) {
+		inventoryLevel {
+			id
+		}
+		userErrors {
+			field
+			message
+		}
+	}
+}
+"""
+
+_INVENTORY_SET_QUANTITIES_MUTATION = """
+mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
+	inventorySetQuantities(input: $input) {
+		inventoryAdjustmentGroup {
+			id
+		}
+		userErrors {
+			field
+			message
+		}
+	}
+}
+"""
+
+
 @temp_shopify_session
 def upload_inventory_data_to_shopify(inventory_levels, warehous_map) -> None:
 	synced_on = now()
@@ -44,18 +88,57 @@ def upload_inventory_data_to_shopify(inventory_levels, warehous_map) -> None:
 			d.shopify_location_id = warehous_map[d.warehouse]
 
 			try:
-				variant = Variant.find(d.variant_id)
-				inventory_id = variant.inventory_item_id
+				variant_gid = f"gid://shopify/ProductVariant/{d.variant_id}"
+				location_gid = f"gid://shopify/Location/{d.shopify_location_id}"
 
-				InventoryLevel.set(
-					location_id=d.shopify_location_id,
-					inventory_item_id=inventory_id,
-					# shopify doesn't support fractional quantity
-					available=cint(d.actual_qty) - cint(d.reserved_qty),
+				variant_response = json.loads(
+					GraphQL().execute(_VARIANT_INVENTORY_ITEM_QUERY, {"id": variant_gid})
 				)
+				variant_data = variant_response.get("data", {}).get("productVariant")
+				if not variant_data:
+					raise _VariantNotFound
+
+				inventory_item_id = variant_data.get("inventoryItem", {}).get("id")
+
+				# Ensure the location is tracking this inventory item before setting
+				# its quantity. On repeat syncs the item is already activated, which
+				# Shopify reports as a userError here; that's expected, not a failure,
+				# so it doesn't block the actual quantity update below.
+				GraphQL().execute(
+					_INVENTORY_ACTIVATE_MUTATION,
+					{"inventoryItemId": inventory_item_id, "locationId": location_gid},
+				)
+
+				set_response = json.loads(
+					GraphQL().execute(
+						_INVENTORY_SET_QUANTITIES_MUTATION,
+						{
+							"input": {
+								"reason": "correction",
+								"name": "available",
+								"ignoreCompareQuantity": True,
+								"quantities": [
+									{
+										"inventoryItemId": inventory_item_id,
+										"locationId": location_gid,
+										# shopify doesn't support fractional quantity
+										"quantity": cint(d.actual_qty) - cint(d.reserved_qty),
+									}
+								],
+							}
+						},
+					)
+				)
+				user_errors = (
+					set_response.get("data", {}).get("inventorySetQuantities", {}).get("userErrors") or []
+				)
+				errors = set_response.get("errors") or user_errors
+				if errors:
+					raise Exception("; ".join(err.get("message", "") for err in errors))
+
 				update_inventory_sync_status(d.ecom_item, time=synced_on)
 				d.status = "Success"
-			except ResourceNotFound:
+			except _VariantNotFound:
 				# Variant or location is deleted, mark as last synced and ignore.
 				update_inventory_sync_status(d.ecom_item, time=synced_on)
 				d.status = "Not Found"

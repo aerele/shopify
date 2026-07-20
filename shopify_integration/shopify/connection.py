@@ -6,8 +6,7 @@ import json
 
 import frappe
 from frappe import _
-from shopify.resources import Webhook
-from shopify.session import Session
+from shopify import GraphQL, Session
 
 from shopify_integration.shopify.constants import (
 	API_VERSION,
@@ -37,7 +36,62 @@ def temp_shopify_session(func):
 	return wrapper
 
 
-def register_webhooks(shopify_url: str, password: str) -> list[Webhook]:
+_WEBHOOK_CREATE_MUTATION = """
+mutation webhookSubscriptionCreate($topic: WebhookSubscriptionTopic!, $callbackUrl: URL!) {
+	webhookSubscriptionCreate(
+		topic: $topic
+		webhookSubscription: {format: JSON, callbackUrl: $callbackUrl}
+	) {
+		webhookSubscription {
+			id
+			topic
+			endpoint {
+				__typename
+				... on WebhookHttpEndpoint {
+					callbackUrl
+				}
+			}
+		}
+		userErrors {
+			field
+			message
+		}
+	}
+}
+"""
+
+_WEBHOOK_SUBSCRIPTIONS_QUERY = """
+query webhookSubscriptions {
+	webhookSubscriptions(first: 250) {
+		edges {
+			node {
+				id
+				endpoint {
+					__typename
+					... on WebhookHttpEndpoint {
+						callbackUrl
+					}
+				}
+			}
+		}
+	}
+}
+"""
+
+_WEBHOOK_DELETE_MUTATION = """
+mutation webhookSubscriptionDelete($id: ID!) {
+	webhookSubscriptionDelete(id: $id) {
+		deletedWebhookSubscriptionId
+		userErrors {
+			field
+			message
+		}
+	}
+}
+"""
+
+
+def register_webhooks(shopify_url: str, password: str) -> list[dict]:
 	"""Register required webhooks with shopify and return registered webhooks."""
 	new_webhooks = []
 
@@ -46,16 +100,26 @@ def register_webhooks(shopify_url: str, password: str) -> list[Webhook]:
 
 	with Session.temp(shopify_url, API_VERSION, password):
 		for topic in WEBHOOK_EVENTS:
-			webhook = Webhook.create({"topic": topic, "address": get_callback_url(), "format": "json"})
+			response = json.loads(
+				GraphQL().execute(
+					_WEBHOOK_CREATE_MUTATION,
+					{"topic": topic, "callbackUrl": get_callback_url()},
+				)
+			)
+			result = response.get("data", {}).get("webhookSubscriptionCreate") or {}
+			user_errors = result.get("userErrors") or []
 
-			if webhook.is_valid():
-				new_webhooks.append(webhook)
-			else:
+			if response.get("errors") or user_errors:
 				create_shopify_log(
 					status="Error",
-					response_data=webhook.to_dict(),
-					exception=webhook.errors.full_messages(),
+					response_data=response,
+					exception=response.get("errors") or user_errors,
 				)
+				continue
+
+			webhook = result.get("webhookSubscription")
+			if webhook:
+				new_webhooks.append(webhook)
 
 	return new_webhooks
 
@@ -65,9 +129,30 @@ def unregister_webhooks(shopify_url: str, password: str) -> None:
 	url = get_current_domain_name()
 
 	with Session.temp(shopify_url, API_VERSION, password):
-		for webhook in Webhook.find():
-			if url in webhook.address:
-				webhook.destroy()
+		response = json.loads(GraphQL().execute(_WEBHOOK_SUBSCRIPTIONS_QUERY))
+		if response.get("errors"):
+			create_shopify_log(status="Error", response_data=response, exception=response["errors"])
+			return
+
+		edges = response.get("data", {}).get("webhookSubscriptions", {}).get("edges", [])
+
+		for edge in edges:
+			node = edge.get("node") or {}
+			callback_url = (node.get("endpoint") or {}).get("callbackUrl", "")
+
+			if url in callback_url:
+				delete_response = json.loads(
+					GraphQL().execute(_WEBHOOK_DELETE_MUTATION, {"id": node.get("id")})
+				)
+				delete_result = delete_response.get("data", {}).get("webhookSubscriptionDelete") or {}
+				user_errors = delete_result.get("userErrors") or []
+
+				if delete_response.get("errors") or user_errors:
+					create_shopify_log(
+						status="Error",
+						response_data=delete_response,
+						exception=delete_response.get("errors") or user_errors,
+					)
 
 
 def get_current_domain_name() -> str:

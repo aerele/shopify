@@ -1,6 +1,8 @@
 # Copyright (c) 2021, Frappe and contributors
 # For license information, please see LICENSE
 
+import json
+
 import frappe
 from ecommerce_core.controllers.setting import (
 	ERPNextWarehouse,
@@ -10,8 +12,7 @@ from ecommerce_core.controllers.setting import (
 from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 from frappe.utils import get_datetime
-from shopify.collection import PaginatedIterator
-from shopify.resources import Location
+from shopify import GraphQL
 
 from shopify_integration.shopify import connection
 from shopify_integration.shopify.constants import (
@@ -29,6 +30,32 @@ from shopify_integration.shopify.utils import (
 	ensure_old_connector_is_disabled,
 	migrate_from_old_connector,
 )
+
+_LOCATIONS_QUERY = """
+query locations($first: Int!, $after: String) {
+	locations(first: $first, after: $after) {
+		edges {
+			node {
+				id
+				name
+			}
+		}
+		pageInfo {
+			hasNextPage
+			endCursor
+		}
+	}
+}
+"""
+
+
+def _gid_to_id(gid) -> str:
+	"""Extract the plain numeric id from a Shopify GraphQL global id, e.g.
+	"gid://shopify/Location/123" -> "123". Used everywhere a numeric id is
+	stored, matching the format the REST API used."""
+	if not gid:
+		return ""
+	return str(gid).rsplit("/", 1)[-1]
 
 
 class ShopifySetting(SettingController):
@@ -62,7 +89,9 @@ class ShopifySetting(SettingController):
 				frappe.throw(msg)
 
 			for webhook in new_webhooks:
-				self.append("webhooks", {"webhook_id": webhook.id, "method": webhook.topic})
+				self.append(
+					"webhooks", {"webhook_id": _gid_to_id(webhook.get("id")), "method": webhook.get("topic")}
+				)
 
 		elif not self.is_enabled():
 			connection.unregister_webhooks(self.shopify_url, self.get_password("password"))
@@ -85,12 +114,27 @@ class ShopifySetting(SettingController):
 		map it with correct ERPNext warehouse."""
 
 		self.shopify_warehouse_mapping = []
-		for locations in PaginatedIterator(Location.find()):
-			for location in locations:
+
+		cursor = None
+		has_next_page = True
+
+		while has_next_page:
+			response = json.loads(GraphQL().execute(_LOCATIONS_QUERY, {"first": 250, "after": cursor}))
+			locations_data = response.get("data", {}).get("locations", {})
+
+			for edge in locations_data.get("edges", []):
+				node = edge.get("node") or {}
 				self.append(
 					"shopify_warehouse_mapping",
-					{"shopify_location_id": location.id, "shopify_location_name": location.name},
+					{
+						"shopify_location_id": _gid_to_id(node.get("id")),
+						"shopify_location_name": node.get("name"),
+					},
 				)
+
+			page_info = locations_data.get("pageInfo", {})
+			has_next_page = page_info.get("hasNextPage", False)
+			cursor = page_info.get("endCursor")
 
 	def get_erpnext_warehouses(self) -> list[ERPNextWarehouse]:
 		return [wh_map.erpnext_warehouse for wh_map in self.shopify_warehouse_mapping]

@@ -6,8 +6,7 @@ from ecommerce_core.utils.price_list import get_dummy_price_list
 from ecommerce_core.utils.taxation import get_dummy_tax_category
 from frappe import _
 from frappe.utils import cint, cstr, flt, get_datetime, getdate, nowdate
-from shopify.collection import PaginatedIterator
-from shopify.resources import Order
+from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import (
@@ -419,17 +418,272 @@ def sync_old_orders():
 	shopify_setting.save()
 
 
-def _fetch_old_orders(from_time, to_time):
+_OLD_ORDERS_QUERY = """
+query oldOrders($query: String!, $limit: Int!, $cursor: String) {
+	orders(first: $limit, query: $query, after: $cursor) {
+		edges {
+			cursor
+			node {
+				id
+				name
+				createdAt
+				note
+				taxesIncluded
+				displayFinancialStatus
+				customer {
+					id
+				}
+				billingAddress {
+					address1
+					address2
+					city
+					province
+					country
+					zip
+					phone
+				}
+				shippingAddress {
+					address1
+					address2
+					city
+					province
+					country
+					zip
+					phone
+				}
+				lineItems(first: 50) {
+					edges {
+						node {
+							id
+							name
+							quantity
+							sku
+							product {
+								id
+							}
+							variant {
+								id
+							}
+							originalUnitPriceSet {
+								shopMoney {
+									amount
+								}
+							}
+							taxLines {
+								title
+								rate
+								priceSet {
+									shopMoney {
+										amount
+									}
+								}
+							}
+							discountAllocations {
+								allocatedAmountSet {
+									shopMoney {
+										amount
+									}
+								}
+							}
+						}
+					}
+				}
+				shippingLines(first: 10) {
+					edges {
+						node {
+							title
+							originalPriceSet {
+								shopMoney {
+									amount
+								}
+							}
+							taxLines {
+								title
+								rate
+								priceSet {
+									shopMoney {
+										amount
+									}
+								}
+							}
+							discountAllocations {
+								allocatedAmountSet {
+									shopMoney {
+										amount
+									}
+								}
+							}
+						}
+					}
+				}
+				fulfillments(first: 10) {
+					id
+					createdAt
+					location {
+						id
+					}
+					fulfillmentLineItems(first: 50) {
+						edges {
+							node {
+								lineItem {
+									sku
+									product {
+										id
+									}
+									variant {
+										id
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		pageInfo {
+			hasNextPage
+			endCursor
+		}
+	}
+}
+"""
+
+
+def _gid_to_id(gid) -> int | None:
+	"""Extract the plain numeric id from a Shopify GraphQL global id, e.g.
+	"gid://shopify/Order/123" -> 123. Used everywhere a numeric id is stored
+	or compared, matching the format the REST API and live webhooks use."""
+	if not gid:
+		return None
+	return cint(str(gid).rsplit("/", 1)[-1])
+
+
+def _money(price_set) -> str:
+	return (price_set or {}).get("shopMoney", {}).get("amount", "0.0")
+
+
+def _normalize_gql_order(node) -> dict:
+	"""Convert a Shopify GraphQL order node into the same snake_case dict
+	shape the rest of this module already expects from the REST API and
+	from live webhook payloads, so no downstream code needs to change."""
+	customer = node.get("customer") or {}
+
+	line_items = []
+	for edge in (node.get("lineItems") or {}).get("edges", []):
+		li = edge.get("node") or {}
+		line_items.append(
+			{
+				"id": _gid_to_id(li.get("id")),
+				"name": li.get("name"),
+				"quantity": li.get("quantity"),
+				"sku": li.get("sku"),
+				"product_id": _gid_to_id((li.get("product") or {}).get("id")),
+				"variant_id": _gid_to_id((li.get("variant") or {}).get("id")),
+				"price": _money(li.get("originalUnitPriceSet")),
+				"tax_lines": [
+					{
+						"title": tax.get("title"),
+						"rate": tax.get("rate"),
+						"price": _money(tax.get("priceSet")),
+					}
+					for tax in li.get("taxLines") or []
+				],
+				"discount_allocations": [
+					{"amount": _money(discount.get("allocatedAmountSet"))}
+					for discount in li.get("discountAllocations") or []
+				],
+			}
+		)
+
+	shipping_lines = []
+	for edge in (node.get("shippingLines") or {}).get("edges", []):
+		sl = edge.get("node") or {}
+		shipping_lines.append(
+			{
+				"title": sl.get("title"),
+				"price": _money(sl.get("originalPriceSet")),
+				"tax_lines": [
+					{
+						"title": tax.get("title"),
+						"rate": tax.get("rate"),
+						"price": _money(tax.get("priceSet")),
+					}
+					for tax in sl.get("taxLines") or []
+				],
+				"discount_allocations": [
+					{"amount": _money(discount.get("allocatedAmountSet"))}
+					for discount in sl.get("discountAllocations") or []
+				],
+			}
+		)
+
+	fulfillments = []
+	for f in node.get("fulfillments") or []:
+		fulfillment_line_items = []
+		for edge in (f.get("fulfillmentLineItems") or {}).get("edges", []):
+			li = (edge.get("node") or {}).get("lineItem") or {}
+			fulfillment_line_items.append(
+				{
+					"product_id": _gid_to_id((li.get("product") or {}).get("id")),
+					"variant_id": _gid_to_id((li.get("variant") or {}).get("id")),
+					"sku": li.get("sku"),
+				}
+			)
+
+		fulfillments.append(
+			{
+				"id": _gid_to_id(f.get("id")),
+				"order_id": _gid_to_id(node.get("id")),
+				"created_at": f.get("createdAt"),
+				"location_id": _gid_to_id((f.get("location") or {}).get("id")),
+				"line_items": fulfillment_line_items,
+			}
+		)
+
+	return {
+		"id": _gid_to_id(node.get("id")),
+		"name": node.get("name"),
+		"created_at": node.get("createdAt"),
+		"note": node.get("note"),
+		"taxes_included": node.get("taxesIncluded"),
+		# normalized to lowercase to match the format Shopify's live
+		# webhook payloads already use for this same field
+		"financial_status": (node.get("displayFinancialStatus") or "").lower(),
+		"customer": {"id": _gid_to_id(customer.get("id"))} if customer.get("id") else {},
+		"billing_address": node.get("billingAddress") or {},
+		"shipping_address": node.get("shippingAddress") or {},
+		"line_items": line_items,
+		"shipping_lines": shipping_lines,
+		"fulfillments": fulfillments,
+	}
+
+
+def _fetch_old_orders(from_time, to_time, limit=250):
 	"""Fetch all shopify orders in specified range and return an iterator on fetched orders."""
 
 	from_time = get_datetime(from_time).astimezone().isoformat()
 	to_time = get_datetime(to_time).astimezone().isoformat()
-	orders_iterator = PaginatedIterator(
-		Order.find(created_at_min=from_time, created_at_max=to_time, limit=250)
-	)
+	search_query = f'created_at:>="{from_time}" AND created_at:<="{to_time}"'
 
-	for orders in orders_iterator:
-		for order in orders:
+	cursor = None
+	has_next_page = True
+
+	while has_next_page:
+		response = json.loads(
+			GraphQL().execute(_OLD_ORDERS_QUERY, {"query": search_query, "limit": limit, "cursor": cursor})
+		)
+
+		if response.get("errors"):
+			frappe.log_error(json.dumps(response["errors"], indent=2), "Shopify Old Orders Fetch Error")
+			return
+
+		orders_data = response.get("data", {}).get("orders", {})
+
+		for edge in orders_data.get("edges", []):
 			# Using generator instead of fetching all at once is better for
 			# avoiding rate limits and reducing resource usage.
-			yield order.to_dict()
+			yield _normalize_gql_order(edge["node"])
+
+		page_info = orders_data.get("pageInfo", {})
+		has_next_page = page_info.get("hasNextPage", False)
+		cursor = page_info.get("endCursor")
