@@ -144,9 +144,20 @@ required_apps = ["ecommerce_core"]
 # 		"on_trash": "method"
 # 	}
 # }
-
+doc_events = {
+	"Item": {
+		"on_update": "shopify_integration.shopify.product.upload_erpnext_item",
+	}
+}
 # Scheduled Tasks
 # ---------------
+
+scheduler_events = {
+	"all": ["shopify_integration.shopify.inventory.update_inventory_on_shopify"],
+	"hourly": [
+		"shopify_integration.shopify.order.sync_old_orders",
+	],
+}
 
 # scheduler_events = {
 # 	"all": [

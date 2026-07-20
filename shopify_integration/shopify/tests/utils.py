@@ -5,6 +5,8 @@ from unittest.mock import patch
 import frappe
 import shopify
 from erpnext import get_default_cost_center
+from erpnext.accounts.doctype.account.test_account import create_account
+from erpnext.stock.doctype.warehouse.test_warehouse import create_warehouse
 from frappe.tests import IntegrationTestCase
 from pyactiveresource.activeresource import ActiveResource
 from pyactiveresource.testing import http_fake
@@ -40,6 +42,8 @@ class TestCase(IntegrationTestCase):
 	def setUpClass(cls):
 		# Call parent first to auto-generate standard test records like _Test Company
 		super().setUpClass()
+
+		cls.ensure_test_fixtures()
 
 		# Now setup Shopify settings with test data
 		with patch(
@@ -83,6 +87,60 @@ class TestCase(IntegrationTestCase):
 					],
 				}
 			).save(ignore_permissions=True)
+
+	@classmethod
+	def ensure_test_fixtures(cls):
+		company = "_Test Company"
+
+		if not frappe.db.exists("Customer Group", "_Test Customer Group 1"):
+			frappe.get_doc(
+				{"doctype": "Customer Group", "customer_group_name": "_Test Customer Group 1"}
+			).insert(ignore_permissions=True)
+
+		if not frappe.db.exists("Customer", "_Test Customer"):
+			frappe.get_doc(
+				{
+					"doctype": "Customer",
+					"customer_name": "_Test Customer",
+					"customer_type": "Individual",
+					"customer_group": "_Test Customer Group 1",
+				}
+			).insert(ignore_permissions=True)
+
+		if not frappe.db.exists("Price List", "_Test Price List"):
+			frappe.get_doc(
+				{
+					"doctype": "Price List",
+					"price_list_name": "_Test Price List",
+					"currency": "INR",
+					"selling": 1,
+				}
+			).insert(ignore_permissions=True)
+
+		create_account(
+			account_name="_Test Bank",
+			account_type="Bank",
+			company=company,
+			parent_account="Bank Accounts - _TC",
+		)
+
+		if not frappe.db.exists("Warehouse", "_Test Warehouse Group - _TC"):
+			frappe.get_doc(
+				{
+					"doctype": "Warehouse",
+					"warehouse_name": "_Test Warehouse Group",
+					"company": company,
+					"is_group": 1,
+					"parent_warehouse": "All Warehouses - _TC",
+				}
+			).insert(ignore_permissions=True)
+
+		create_warehouse("_Test Warehouse", company=company)
+		create_warehouse("_Test Warehouse 1", company=company)
+		create_warehouse("_Test Warehouse 2", company=company)
+
+		frappe.db.set_default("company", company)
+		frappe.db.set_default("default_warehouse", "_Test Warehouse - _TC")
 
 	def setUp(self):
 		ActiveResource.site = None
