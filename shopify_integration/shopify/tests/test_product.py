@@ -10,7 +10,7 @@ from .utils import TestCase
 
 class TestProduct(TestCase):
 	def test_sync_single_product(self):
-		self.fake("products/6732194021530", body=self.load_fixture("single_product"))
+		self.fake_graphql("single_product_gql")
 
 		product = ShopifyProduct(product_id="6732194021530", variant_id="39933951901850")
 
@@ -26,7 +26,7 @@ class TestProduct(TestCase):
 		self.assertTrue(bool(ecommerce_item_exists))
 
 	def test_sync_product_with_variants(self):
-		self.fake("products/6704435495065", body=self.load_fixture("variant_product"))
+		self.fake_graphql("variant_product_gql")
 
 		product = ShopifyProduct(product_id="6704435495065")
 
@@ -81,14 +81,16 @@ class TestProduct(TestCase):
 			template_item.item_code, {"Test Sync Size": "M", "Test Sync Colour": "Green"}
 		)
 
-		self.fake("products/6704435495065", body=self.load_fixture("variant_product"))
+		self.fake_graphql("variant_product_gql")
 		product = ShopifyProduct(product_id="6704435495065", has_variants=1)
 		product.sync_product()
 
 		self.assertTrue(product.is_synced())
-		from shopify.resources import Product
 
-		shopify_product = Product.find(product.product_id)
+		self.fake_graphql("variant_product_gql")
+		from shopify_integration.shopify.product import _fetch_shopify_product
+
+		shopify_product = _fetch_shopify_product(product.product_id)
 
 		from shopify_integration.shopify.product import map_erpnext_variant_to_shopify_variant
 

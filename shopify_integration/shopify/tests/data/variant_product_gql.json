@@ -1,0 +1,154 @@
+{
+	"data": {
+		"product": {
+			"id": "gid://shopify/Product/6704435495065",
+			"title": "short t shirt",
+			"descriptionHtml": "THis is a t shirt.",
+			"productType": "shirt",
+			"vendor": "frappetest",
+			"featuredImage": {
+				"url": "https://cdn.shopify.com/s/files/1/0557/8804/4441/products/Screenshot2021-04-17at3.19.24PM.png?v=1618916991"
+			},
+			"options": [
+				{
+					"name": "Size",
+					"values": ["S", "M", "L"]
+				},
+				{
+					"name": "Color",
+					"values": ["Red", "Blue", "Green"]
+				}
+			],
+			"variants": {
+				"edges": [
+					{
+						"node": {
+							"id": "gid://shopify/ProductVariant/39845261443225",
+							"title": "S / Red",
+							"sku": "TSHIRT-001",
+							"price": "1000.00",
+							"inventoryItem": {
+								"measurement": {
+									"weight": {"value": 0.0, "unit": "KILOGRAMS"}
+								}
+							},
+							"selectedOptions": [{"name": "Size", "value": "S"}, {"name": "Color", "value": "Red"}]
+						}
+					},
+					{
+						"node": {
+							"id": "gid://shopify/ProductVariant/39845261475993",
+							"title": "S / Blue",
+							"sku": "TSHIRT-002",
+							"price": "1000.00",
+							"inventoryItem": {
+								"measurement": {
+									"weight": {"value": 0.0, "unit": "KILOGRAMS"}
+								}
+							},
+							"selectedOptions": [{"name": "Size", "value": "S"}, {"name": "Color", "value": "Blue"}]
+						}
+					},
+					{
+						"node": {
+							"id": "gid://shopify/ProductVariant/39845261508761",
+							"title": "S / Green",
+							"sku": "TSHIRT-003",
+							"price": "1000.00",
+							"inventoryItem": {
+								"measurement": {
+									"weight": {"value": 0.0, "unit": "KILOGRAMS"}
+								}
+							},
+							"selectedOptions": [{"name": "Size", "value": "S"}, {"name": "Color", "value": "Green"}]
+						}
+					},
+					{
+						"node": {
+							"id": "gid://shopify/ProductVariant/39845261541529",
+							"title": "M / Red",
+							"sku": "TSHIRT-004",
+							"price": "1000.00",
+							"inventoryItem": {
+								"measurement": {
+									"weight": {"value": 0.0, "unit": "KILOGRAMS"}
+								}
+							},
+							"selectedOptions": [{"name": "Size", "value": "M"}, {"name": "Color", "value": "Red"}]
+						}
+					},
+					{
+						"node": {
+							"id": "gid://shopify/ProductVariant/39845261574297",
+							"title": "M / Blue",
+							"sku": "TSHIRT-005",
+							"price": "1000.00",
+							"inventoryItem": {
+								"measurement": {
+									"weight": {"value": 0.0, "unit": "KILOGRAMS"}
+								}
+							},
+							"selectedOptions": [{"name": "Size", "value": "M"}, {"name": "Color", "value": "Blue"}]
+						}
+					},
+					{
+						"node": {
+							"id": "gid://shopify/ProductVariant/39845261607065",
+							"title": "M / Green",
+							"sku": "TSHIRT-006",
+							"price": "1000.00",
+							"inventoryItem": {
+								"measurement": {
+									"weight": {"value": 0.0, "unit": "KILOGRAMS"}
+								}
+							},
+							"selectedOptions": [{"name": "Size", "value": "M"}, {"name": "Color", "value": "Green"}]
+						}
+					},
+					{
+						"node": {
+							"id": "gid://shopify/ProductVariant/39845261639833",
+							"title": "L / Red",
+							"sku": "TSHIRT-007",
+							"price": "1000.00",
+							"inventoryItem": {
+								"measurement": {
+									"weight": {"value": 0.0, "unit": "KILOGRAMS"}
+								}
+							},
+							"selectedOptions": [{"name": "Size", "value": "L"}, {"name": "Color", "value": "Red"}]
+						}
+					},
+					{
+						"node": {
+							"id": "gid://shopify/ProductVariant/39845261672601",
+							"title": "L / Blue",
+							"sku": "TSHIRT-008",
+							"price": "1000.00",
+							"inventoryItem": {
+								"measurement": {
+									"weight": {"value": 0.0, "unit": "KILOGRAMS"}
+								}
+							},
+							"selectedOptions": [{"name": "Size", "value": "L"}, {"name": "Color", "value": "Blue"}]
+						}
+					},
+					{
+						"node": {
+							"id": "gid://shopify/ProductVariant/39845261705369",
+							"title": "L / Green",
+							"sku": "TSHIRT-009",
+							"price": "1000.00",
+							"inventoryItem": {
+								"measurement": {
+									"weight": {"value": 0.0, "unit": "KILOGRAMS"}
+								}
+							},
+							"selectedOptions": [{"name": "Size", "value": "L"}, {"name": "Color", "value": "Green"}]
+						}
+					}
+				]
+			}
+		}
+	}
+}

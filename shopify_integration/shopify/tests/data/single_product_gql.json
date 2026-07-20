@@ -1,0 +1,38 @@
+{
+	"data": {
+		"product": {
+			"id": "gid://shopify/Product/6732194021530",
+			"title": "Orange MePhone",
+			"descriptionHtml": "Best Phone in the World",
+			"productType": "",
+			"vendor": "frappetest",
+			"featuredImage": {
+				"url": "https://cdn.shopify.com/s/files/1/0557/8804/4441/products/0_BheVxxvDhXo78Oo3.jpg?v=1619700135"
+			},
+			"options": [
+				{
+					"name": "Title",
+					"values": ["Default Title"]
+				}
+			],
+			"variants": {
+				"edges": [
+					{
+						"node": {
+							"id": "gid://shopify/ProductVariant/39933951901850",
+							"title": "Default Title",
+							"sku": "MePHONE-002",
+							"price": "44000.00",
+							"inventoryItem": {
+								"measurement": {
+									"weight": {"value": 200.0, "unit": "GRAMS"}
+								}
+							},
+							"selectedOptions": [{"name": "Title", "value": "Default Title"}]
+						}
+					}
+				]
+			}
+		}
+	}
+}
