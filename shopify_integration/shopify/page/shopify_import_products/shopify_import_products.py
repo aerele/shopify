@@ -1,12 +1,12 @@
 from time import process_time
 
 import frappe
+from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
 from frappe.exceptions import UniqueValidationError
 from shopify.resources import Product
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import MODULE_NAME
-from shopify_integration.shopify.doctype.ecommerce_item import ecommerce_item
 from shopify_integration.shopify.product import ShopifyProduct
 
 # constants

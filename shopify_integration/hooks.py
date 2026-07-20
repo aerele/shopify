@@ -8,7 +8,7 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = ["ecommerce_core"]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
@@ -144,9 +144,20 @@ app_license = "mit"
 # 		"on_trash": "method"
 # 	}
 # }
-
+doc_events = {
+	"Item": {
+		"on_update": "shopify_integration.shopify.product.upload_erpnext_item",
+	}
+}
 # Scheduled Tasks
 # ---------------
+
+scheduler_events = {
+	"all": ["shopify_integration.shopify.inventory.update_inventory_on_shopify"],
+	"hourly": [
+		"shopify_integration.shopify.order.sync_old_orders",
+	],
+}
 
 # scheduler_events = {
 # 	"all": [
@@ -169,7 +180,7 @@ app_license = "mit"
 # Testing
 # -------
 
-# before_tests = "shopify_integration.install.before_tests"
+before_tests = "ecommerce_core.utils.before_test.before_tests"
 
 # Overriding Methods
 # ------------------------------
@@ -246,4 +257,3 @@ app_license = "mit"
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-
