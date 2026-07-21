@@ -30,7 +30,6 @@ DEFAULT_TAX_FIELDS = {
 
 def sync_sales_order(payload, request_id=None):
 	order = payload
-	frappe.set_user("Administrator")
 	frappe.flags.request_id = request_id
 
 	if frappe.db.get_value("Sales Order", filters={ORDER_ID_FIELD: cstr(order["id"])}):
@@ -65,8 +64,10 @@ def reconcile_existing_order(order, request_id=None):
 	"""Called when a Sales Order already exists for this Shopify order id
 	(e.g. re-synced via sync_old_orders after enable_shopify was off).
 	Brings the Sales Invoice / Delivery Note / cancellation state up to
-	date with Shopify's current state, instead of skipping silently."""
-	frappe.set_user("Administrator")
+	date with Shopify's current state, instead of skipping silently.
+
+	Only ever called from sync_sales_order(), which has already set the
+	user/request_id for this job, so it doesn't need to set them again."""
 	frappe.flags.request_id = request_id
 
 	if order.get("cancelled_at"):

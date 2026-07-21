@@ -24,17 +24,31 @@ def prepare_delivery_note(payload, request_id=None):
 	try:
 		sales_order = get_sales_order(cstr(order["id"]))
 		if sales_order:
-			create_delivery_note(order, setting, sales_order)
-			create_shopify_log(status="Success")
+			created_delivery_notes = create_delivery_note(order, setting, sales_order)
+			if created_delivery_notes:
+				create_shopify_log(status="Success")
+			else:
+				create_shopify_log(
+					status="Invalid",
+					message=(
+						"No delivery note was created for this fulfillment (delivery note sync is"
+						" disabled, the fulfillment was already synced, or the Sales Order isn't"
+						" submitted)."
+					),
+				)
 		else:
 			create_shopify_log(status="Invalid", message="Sales Order not found for syncing delivery note.")
 	except Exception as e:
 		create_shopify_log(status="Error", exception=e, rollback=True)
 
 
-def create_delivery_note(shopify_order, setting, so):
+def create_delivery_note(shopify_order, setting, so) -> list[str]:
+	"""Create a Delivery Note for each of this order's fulfillments that
+	doesn't have one yet. Returns the names of the Delivery Notes created,
+	so callers can tell an actual sync apart from a no-op (e.g. delivery
+	note sync disabled, or every fulfillment already synced)."""
 	if not cint(setting.sync_delivery_note):
-		return
+		return None
 
 	for fulfillment in shopify_order.get("fulfillments"):
 		if (
@@ -57,6 +71,8 @@ def create_delivery_note(shopify_order, setting, so):
 
 			if shopify_order.get("note"):
 				dn.add_comment(text=f"Order Note: {shopify_order.get('note')}")
+
+	return dn.name if dn else None
 
 
 def get_fulfillment_items(dn_items, fulfillment_items, location_id=None):

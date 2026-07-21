@@ -22,15 +22,29 @@ def prepare_sales_invoice(payload, request_id=None):
 	try:
 		sales_order = get_sales_order(cstr(order["id"]))
 		if sales_order:
-			create_sales_invoice(order, setting, sales_order)
-			create_shopify_log(status="Success")
+			created_sales_invoice = create_sales_invoice(order, setting, sales_order)
+			if created_sales_invoice:
+				create_shopify_log(status="Success")
+			else:
+				create_shopify_log(
+					status="Invalid",
+					message=(
+						"No sales invoice was created for this order (sales invoice sync is"
+						" disabled, an invoice already exists, the Sales Order isn't submitted,"
+						" or it's already fully billed)."
+					),
+				)
 		else:
 			create_shopify_log(status="Invalid", message="Sales Order not found for syncing sales invoice.")
 	except Exception as e:
 		create_shopify_log(status="Error", exception=e, rollback=True)
 
 
-def create_sales_invoice(shopify_order, setting, so):
+def create_sales_invoice(shopify_order, setting, so) -> str | None:
+	"""Create a Sales Invoice for this order if one doesn't exist yet.
+	Returns the created Sales Invoice's name, or None if nothing was
+	created, so callers can tell an actual sync apart from a no-op (e.g.
+	sales invoice sync disabled, or already invoiced)."""
 	if (
 		not frappe.db.get_value("Sales Invoice", {ORDER_ID_FIELD: shopify_order.get("id")}, "name")
 		and so.docstatus == 1
@@ -55,6 +69,10 @@ def create_sales_invoice(shopify_order, setting, so):
 
 		if shopify_order.get("note"):
 			sales_invoice.add_comment(text=f"Order Note: {shopify_order.get('note')}")
+
+		return sales_invoice.name
+
+	return None
 
 
 def set_cost_center(items, cost_center):
