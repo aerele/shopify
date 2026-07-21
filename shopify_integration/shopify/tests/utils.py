@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from unittest.mock import patch
@@ -159,6 +160,31 @@ class TestCase(IntegrationTestCase):
 	def load_fixture(self, name, format="json"):
 		with open(os.path.dirname(__file__) + f"/data/{name}.{format}", "rb") as f:
 			return f.read()
+
+	def fake_graphql(self, response, **kwargs):
+		"""Register a fake response for the single Shopify GraphQL endpoint.
+
+		Unlike REST (one URL per resource), every GraphQL call goes to the
+		same URL/method, so only one response can be queued at a time - call
+		this again immediately before each subsequent GraphQL-triggering
+		action within a test, in the order those calls will actually happen.
+
+		`response` may be a fixture name (its content is loaded from
+		`data/<name>.json`) or a dict/JSON string to use as the response
+		body directly - either way, the fake is always registered against
+		the graphql.json endpoint, not a URL derived from `response`.
+		"""
+		headers = {"Accept": "application/json", "Content-Type": "application/json"}
+		headers.update(kwargs.pop("headers", {}))
+
+		if isinstance(response, dict):
+			body = json.dumps(response)
+		elif "body" in kwargs:
+			body = kwargs.pop("body")
+		else:
+			body = self.load_fixture(response)
+
+		self.fake("graphql", body=body, method="POST", headers=headers, **kwargs)
 
 	def fake(self, endpoint, **kwargs):
 		body = kwargs.pop("body", None) or self.load_fixture(endpoint)

@@ -1,13 +1,93 @@
 import json
 import os
+from unittest.mock import patch
 
 import frappe
-import shopify
 
 from shopify_integration.shopify.product import ShopifyProduct
 
 from ...tests.utils import TestCase
 from .shopify_import_products import queue_sync_all_products
+
+_WEIGHT_UNIT_TO_GQL = {"kg": "KILOGRAMS", "g": "GRAMS", "lb": "POUNDS", "oz": "OUNCES"}
+
+
+def _rest_variant_to_gql_node(variant):
+	selected_options = []
+	for key in ("option1", "option2", "option3"):
+		if variant.get(key):
+			selected_options.append({"name": key, "value": variant[key]})
+
+	return {
+		"id": f"gid://shopify/ProductVariant/{variant['id']}",
+		"title": variant.get("title"),
+		"sku": variant.get("sku"),
+		"price": variant.get("price"),
+		"inventoryItem": {
+			"measurement": {
+				"weight": {
+					"value": variant.get("weight"),
+					"unit": _WEIGHT_UNIT_TO_GQL.get(variant.get("weight_unit"), "GRAMS"),
+				}
+			}
+		},
+		"selectedOptions": selected_options,
+	}
+
+
+def _rest_product_to_gql_detail_response(product):
+	"""Convert a REST-shaped Shopify product fixture (as used by the old
+	REST tests) into the GraphQL response shape `_fetch_shopify_product()`'s
+	query expects, so the same underlying fixture data can drive both."""
+	image = product.get("image") or {}
+
+	return {
+		"data": {
+			"product": {
+				"id": f"gid://shopify/Product/{product['id']}",
+				"title": product.get("title"),
+				"descriptionHtml": product.get("body_html"),
+				"productType": product.get("product_type"),
+				"vendor": product.get("vendor"),
+				"featuredImage": {"url": image.get("src")} if image.get("src") else None,
+				"options": [
+					{"name": o.get("name"), "values": o.get("values")} for o in product.get("options", [])
+				],
+				"variants": {
+					"edges": [{"node": _rest_variant_to_gql_node(v)} for v in product.get("variants", [])]
+				},
+			}
+		}
+	}
+
+
+def _rest_products_to_gql_list_response(products):
+	edges = []
+	for product in products:
+		variant_edges = [{"node": {"sku": v.get("sku")}} for v in product.get("variants", [])]
+		edges.append(
+			{
+				"node": {
+					"id": f"gid://shopify/Product/{product['id']}",
+					"title": product.get("title"),
+					"variants": {"edges": variant_edges},
+				}
+			}
+		)
+
+	return {
+		"data": {
+			"products": {
+				"edges": edges,
+				"pageInfo": {
+					"hasNextPage": False,
+					"hasPreviousPage": False,
+					"startCursor": None,
+					"endCursor": None,
+				},
+			}
+		}
+	}
 
 
 class TestShopifyImportProducts(TestCase):
@@ -56,14 +136,26 @@ class TestShopifyImportProducts(TestCase):
 			"6808929304623": ["40279220518959"],
 		}
 
-		# fake shopify endpoints
-		self.fake("products", body=self.load_fixture("bulk_products"), extension="json?limit=100")
-		self.fake("products/count", body='{"count": 10}')
+		# Every GraphQL call goes to the same endpoint, so http_fake's
+		# URL-based mocking (one static response per URL) can't distinguish
+		# between the count/list/detail queries queue_sync_all_products()
+		# issues in sequence. Instead, fake the SDK's execute() call itself
+		# and route by query text, reusing the same REST-shaped fixture
+		# data the old tests used.
+		products_by_id = {str(p["id"]): p for p in self._products}
 
-		for product in required_products:
-			self.fake_single_product_from_bulk(product)
+		def fake_execute(graphql_self, query, variables=None, operation_name=None):
+			if "productsCount" in query:
+				return json.dumps({"data": {"productsCount": {"count": len(self._products)}}})
+			if "query products(" in query:
+				return json.dumps(_rest_products_to_gql_list_response(self._products))
+			if "query product(" in query:
+				product_id = variables["id"].rsplit("/", 1)[-1]
+				return json.dumps(_rest_product_to_gql_detail_response(products_by_id[product_id]))
+			raise AssertionError(f"Unexpected GraphQL query in test_import_all_products: {query}")
 
-		queue_sync_all_products()
+		with patch("shopify.resources.graphql.GraphQL.execute", fake_execute):
+			queue_sync_all_products()
 
 		for product, required_variants in required_products.items():
 			# has_variants is needed to avoid get_erpnext_item()
@@ -94,10 +186,3 @@ class TestShopifyImportProducts(TestCase):
 
 			self.assertEqual(len(created_ecom_variants), len(required_variants))
 			self.assertEqual(sorted(required_variants), sorted(created_ecom_variants))
-
-	def fake_single_product_from_bulk(self, product):
-		item = next(p for p in self._products if str(p["id"]) == product)
-
-		product_json = json.dumps({"product": item})
-
-		self.fake(f"products/{product}", body=product_json)

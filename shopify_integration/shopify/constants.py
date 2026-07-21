@@ -8,12 +8,14 @@ OLD_SETTINGS_DOCTYPE = "Shopify Settings"
 
 API_VERSION = "2024-01"
 
+# Shopify's GraphQL webhookSubscriptionCreate mutation expects topics as
+# WebhookSubscriptionTopic enum values, unlike REST's "orders/create" style.
 WEBHOOK_EVENTS = [
-	"orders/create",
-	"orders/paid",
-	"orders/fulfilled",
-	"orders/cancelled",
-	"orders/partially_fulfilled",
+	"ORDERS_CREATE",
+	"ORDERS_PAID",
+	"ORDERS_FULFILLED",
+	"ORDERS_CANCELLED",
+	"ORDERS_PARTIALLY_FULFILLED",
 ]
 
 EVENT_MAPPER = {
@@ -39,4 +41,11 @@ ORDER_ITEM_DISCOUNT_FIELD = "shopify_item_discount"
 ITEM_SELLING_RATE_FIELD = "shopify_selling_rate"
 
 # ERPNext already defines the default UOMs from Shopify but names are different
-WEIGHT_TO_ERPNEXT_UOM_MAP = {"kg": "Kg", "g": "Gram", "oz": "Ounce", "lb": "Pound"}
+# Shopify's GraphQL weightUnit enum values are uppercase (e.g. "KILOGRAMS"),
+# unlike REST's lowercase abbreviations (e.g. "kg").
+WEIGHT_TO_ERPNEXT_UOM_MAP = {
+	"KILOGRAMS": "Kg",
+	"GRAMS": "Gram",
+	"OUNCES": "Ounce",
+	"POUNDS": "Pound",
+}

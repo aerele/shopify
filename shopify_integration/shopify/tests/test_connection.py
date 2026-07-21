@@ -5,8 +5,7 @@ import unittest
 
 import frappe
 from frappe.tests import IntegrationTestCase
-from shopify.resources import Webhook
-from shopify.session import Session
+from shopify import GraphQL, Session
 
 from shopify_integration.shopify import connection
 from shopify_integration.shopify.constants import API_VERSION, SETTING_DOCTYPE
@@ -25,7 +24,7 @@ class TestShopifyConnection(IntegrationTestCase):
 
 		self.assertEqual(len(webhooks), len(connection.WEBHOOK_EVENTS))
 
-		wh_topics = [wh.topic for wh in webhooks]
+		wh_topics = [wh.get("topic") for wh in webhooks]
 		self.assertEqual(sorted(wh_topics), sorted(connection.WEBHOOK_EVENTS))
 
 	@unittest.skip("Can't run these tests in CI")
@@ -35,5 +34,10 @@ class TestShopifyConnection(IntegrationTestCase):
 		callback_url = connection.get_callback_url()
 
 		with Session.temp(self.setting.shopify_url, API_VERSION, self.setting.get_password("password")):
-			for wh in Webhook.find():
-				self.assertNotEqual(wh.address, callback_url)
+			import json
+
+			response = json.loads(GraphQL().execute(connection._WEBHOOK_SUBSCRIPTIONS_QUERY))
+			edges = response.get("data", {}).get("webhookSubscriptions", {}).get("edges", [])
+			for edge in edges:
+				endpoint = (edge.get("node") or {}).get("endpoint") or {}
+				self.assertNotEqual(endpoint.get("callbackUrl"), callback_url)
