@@ -7,7 +7,11 @@ import frappe
 from shopify_integration.shopify.product import ShopifyProduct
 
 from ...tests.utils import TestCase
-from .shopify_import_products import queue_sync_all_products
+from .shopify_import_products import (
+	_build_product_search_query,
+	get_shopify_products,
+	queue_sync_all_products,
+)
 
 _WEIGHT_UNIT_TO_GQL = {"kg": "KILOGRAMS", "g": "GRAMS", "lb": "POUNDS", "oz": "OUNCES"}
 
@@ -186,3 +190,47 @@ class TestShopifyImportProducts(TestCase):
 
 			self.assertEqual(len(created_ecom_variants), len(required_variants))
 			self.assertEqual(sorted(required_variants), sorted(created_ecom_variants))
+
+	def test_build_product_search_query(self):
+		self.assertIsNone(_build_product_search_query(None))
+		self.assertIsNone(_build_product_search_query(""))
+		self.assertIsNone(_build_product_search_query("   "))
+
+		self.assertEqual(_build_product_search_query("shirt"), "title:*shirt*")
+
+		self.assertEqual(
+			_build_product_search_query("123456"),
+			"title:*123456* OR id:123456",
+		)
+
+		# Shopify's search DSL treats `: " ( ) *` as syntax characters -
+		# confirmed live that leaving them in silently breaks the query
+		# instead of erroring, so they must be stripped before embedding.
+		self.assertEqual(
+			_build_product_search_query("(Sample) Coconut Bar Soap"),
+			"title:*Sample Coconut Bar Soap*",
+		)
+
+	def test_get_shopify_products_with_search_term(self):
+		captured = {}
+
+		def fake_execute(graphql_self, query, variables=None, operation_name=None):
+			captured["query"] = variables.get("query")
+			return json.dumps(_rest_products_to_gql_list_response(self._products[:1]))
+
+		with patch("shopify.resources.graphql.GraphQL.execute", fake_execute):
+			get_shopify_products(search_term="shirt")
+
+		self.assertEqual(captured["query"], "title:*shirt*")
+
+	def test_get_shopify_products_page_size_clamped(self):
+		captured = {}
+
+		def fake_execute(graphql_self, query, variables=None, operation_name=None):
+			captured["first"] = variables.get("first")
+			return json.dumps(_rest_products_to_gql_list_response(self._products[:1]))
+
+		with patch("shopify.resources.graphql.GraphQL.execute", fake_execute):
+			get_shopify_products(limit=999)
+
+		self.assertEqual(captured["first"], 20)

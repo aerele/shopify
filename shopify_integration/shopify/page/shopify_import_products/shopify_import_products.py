@@ -55,7 +55,7 @@ def _build_product_search_query(search_term):
 
 
 @frappe.whitelist()
-def get_shopify_products(from_=None, limit=20, search_term=None):
+def get_shopify_products(from_: str | None = None, limit: int = 20, search_term: str | None = None):
 	limit = cint(limit) or 20
 	if limit not in (20, 50):
 		limit = 20
