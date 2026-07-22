@@ -30,11 +30,10 @@ DEFAULT_TAX_FIELDS = {
 
 def sync_sales_order(payload, request_id=None):
 	order = payload
-	frappe.set_user("Administrator")
 	frappe.flags.request_id = request_id
 
 	if frappe.db.get_value("Sales Order", filters={ORDER_ID_FIELD: cstr(order["id"])}):
-		create_shopify_log(status="Invalid", message="Sales order already exists, not synced")
+		reconcile_existing_order(order, request_id=request_id)
 		return
 	try:
 		shopify_customer = order.get("customer") if order.get("customer") is not None else {}
@@ -52,6 +51,46 @@ def sync_sales_order(payload, request_id=None):
 
 		setting = frappe.get_doc(SETTING_DOCTYPE)
 		create_order(order, setting)
+
+		if order.get("cancelled_at"):
+			cancel_order(order, request_id=request_id)
+	except Exception as e:
+		create_shopify_log(status="Error", exception=e, rollback=True)
+	else:
+		create_shopify_log(status="Success")
+
+
+def reconcile_existing_order(order, request_id=None):
+	"""Called when a Sales Order already exists for this Shopify order id
+	(e.g. re-synced via sync_old_orders after enable_shopify was off).
+	Brings the Sales Invoice / Delivery Note / cancellation state up to
+	date with Shopify's current state, instead of skipping silently.
+
+	Only ever called from sync_sales_order(), which has already set the
+	user/request_id for this job, so it doesn't need to set them again."""
+	frappe.flags.request_id = request_id
+
+	if order.get("cancelled_at"):
+		cancel_order(order, request_id=request_id)
+		return
+
+	# local import to avoid circular dependencies
+	from shopify_integration.shopify.fulfillment import create_delivery_note
+	from shopify_integration.shopify.invoice import create_sales_invoice
+
+	try:
+		sales_order = get_sales_order(cstr(order["id"]))
+		if not sales_order:
+			create_shopify_log(status="Invalid", message="Sales Order not found for status reconciliation")
+			return
+
+		setting = frappe.get_doc(SETTING_DOCTYPE)
+
+		if order.get("financial_status") == "paid":
+			create_sales_invoice(order, setting, sales_order)
+
+		if order.get("fulfillments"):
+			create_delivery_note(order, setting, sales_order)
 	except Exception as e:
 		create_shopify_log(status="Error", exception=e, rollback=True)
 	else:
@@ -364,7 +403,6 @@ def cancel_order(payload, request_id=None):
 
 	IF sales invoice / delivery notes are not generated against an order, then cancel it.
 	"""
-	frappe.set_user("Administrator")
 	frappe.flags.request_id = request_id
 
 	order = payload
@@ -389,6 +427,7 @@ def cancel_order(payload, request_id=None):
 			frappe.db.set_value("Delivery Note", dn.name, ORDER_STATUS_FIELD, order_status)
 
 		if not sales_invoice and not delivery_notes and sales_order.docstatus == 1:
+			sales_order.flags.ignore_permissions = True
 			sales_order.cancel()
 		else:
 			frappe.db.set_value("Sales Order", sales_order.name, ORDER_STATUS_FIELD, order_status)
@@ -427,6 +466,7 @@ query oldOrders($query: String!, $limit: Int!, $cursor: String) {
 				id
 				name
 				createdAt
+				cancelledAt
 				note
 				taxesIncluded
 				displayFinancialStatus
@@ -525,6 +565,7 @@ query oldOrders($query: String!, $limit: Int!, $cursor: String) {
 					fulfillmentLineItems(first: 50) {
 						edges {
 							node {
+								quantity
 								lineItem {
 									sku
 									product {
@@ -571,13 +612,19 @@ def _normalize_gql_order(node) -> dict:
 	line_items = []
 	for edge in (node.get("lineItems") or {}).get("edges", []):
 		li = edge.get("node") or {}
+		product_id = _gid_to_id((li.get("product") or {}).get("id"))
 		line_items.append(
 			{
 				"id": _gid_to_id(li.get("id")),
 				"name": li.get("name"),
 				"quantity": li.get("quantity"),
 				"sku": li.get("sku"),
-				"product_id": _gid_to_id((li.get("product") or {}).get("id")),
+				# Shopify's REST webhook payloads include this natively;
+				# GraphQL has no direct equivalent, so derive it from
+				# whether the product still exists (product is null if
+				# it was deleted from the store).
+				"product_exists": bool(product_id),
+				"product_id": product_id,
 				"variant_id": _gid_to_id((li.get("variant") or {}).get("id")),
 				"price": _money(li.get("originalUnitPriceSet")),
 				"tax_lines": [
@@ -621,12 +668,14 @@ def _normalize_gql_order(node) -> dict:
 	for f in node.get("fulfillments") or []:
 		fulfillment_line_items = []
 		for edge in (f.get("fulfillmentLineItems") or {}).get("edges", []):
-			li = (edge.get("node") or {}).get("lineItem") or {}
+			fli_node = edge.get("node") or {}
+			li = fli_node.get("lineItem") or {}
 			fulfillment_line_items.append(
 				{
 					"product_id": _gid_to_id((li.get("product") or {}).get("id")),
 					"variant_id": _gid_to_id((li.get("variant") or {}).get("id")),
 					"sku": li.get("sku"),
+					"quantity": fli_node.get("quantity"),
 				}
 			)
 
@@ -644,6 +693,7 @@ def _normalize_gql_order(node) -> dict:
 		"id": _gid_to_id(node.get("id")),
 		"name": node.get("name"),
 		"created_at": node.get("createdAt"),
+		"cancelled_at": node.get("cancelledAt"),
 		"note": node.get("note"),
 		"taxes_included": node.get("taxesIncluded"),
 		# normalized to lowercase to match the format Shopify's live
@@ -663,7 +713,7 @@ def _fetch_old_orders(from_time, to_time, limit=250):
 
 	from_time = get_datetime(from_time).astimezone().isoformat()
 	to_time = get_datetime(to_time).astimezone().isoformat()
-	search_query = f'created_at:>="{from_time}" AND created_at:<="{to_time}"'
+	search_query = f'status:any AND updated_at:>="{from_time}" AND updated_at:<="{to_time}"'
 
 	cursor = None
 	has_next_page = True

@@ -297,6 +297,19 @@ def _gid_to_id(gid) -> str:
 	return str(gid).rsplit("/", 1)[-1]
 
 
+def _get_selling_rate(item, template=None):
+	"""Shopify Selling Rate isn't carried over when ERPNext creates a new
+	variant (e.g. via the "Create Variant" button), so it's still 0 on the
+	very first save - Shopify rejects a variant/product with a blank price.
+	Fall back to the item's standard selling rate, then to the template
+	item's rates, since a rate set only on the template doesn't get copied
+	to variants either."""
+	rate = item.get(ITEM_SELLING_RATE_FIELD) or item.get("standard_rate")
+	if not rate and template:
+		rate = template.get(ITEM_SELLING_RATE_FIELD) or template.get("standard_rate")
+	return rate
+
+
 def _normalize_gql_variant(node) -> dict:
 	weight = ((node.get("inventoryItem") or {}).get("measurement") or {}).get("weight") or {}
 	variant = {
@@ -515,6 +528,25 @@ mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsB
 }
 """
 
+_VARIANTS_BULK_CREATE_MUTATION = """
+mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+	productVariantsBulkCreate(productId: $productId, variants: $variants) {
+		productVariants {
+			id
+			sku
+			selectedOptions {
+				name
+				value
+			}
+		}
+		userErrors {
+			field
+			message
+		}
+	}
+}
+"""
+
 
 def _save_shopify_product(mutation: str, mutation_name: str, product_input: dict) -> dict | None:
 	"""Run productCreate/productUpdate and return the normalized product dict,
@@ -590,14 +622,14 @@ def upload_erpnext_item(doc, method=None):
 
 		variant_attributes = {
 			"sku": template_item.item_code,
-			"price": template_item.get(ITEM_SELLING_RATE_FIELD),
+			"price": _get_selling_rate(template_item),
 		}
 		option_values = None
 
 		if item.variant_of:
 			option_values = []
-			option_names = []
-			variant_attributes = {"sku": item.item_code, "price": item.get(ITEM_SELLING_RATE_FIELD)}
+			product_options = []
+			variant_attributes = {"sku": item.item_code, "price": _get_selling_rate(item, template_item)}
 			max_index_range = min(3, len(template_item.attributes))
 			for i in range(0, max_index_range):
 				attr = template_item.attributes[i]
@@ -606,9 +638,13 @@ def upload_erpnext_item(doc, method=None):
 				except IndexError:
 					frappe.throw(_("Shopify Error: Missing value for attribute {}").format(attr.attribute))
 				variant_attributes[f"option{i + 1}"] = attribute_value
-				option_names.append(attr.attribute)
 				option_values.append({"optionName": attr.attribute, "name": attribute_value})
-			product_input["options"] = option_names
+				product_options.append(
+					{"name": attr.attribute, "position": i + 1, "values": [{"name": attribute_value}]}
+				)
+			# ProductInput has no "options" field (plain string list) - option
+			# names/values are set via "productOptions" instead.
+			product_input["productOptions"] = product_options
 
 		product = _save_shopify_product(_PRODUCT_CREATE_MUTATION, "productCreate", product_input)
 		is_successful = bool(product)
@@ -657,12 +693,12 @@ def upload_erpnext_item(doc, method=None):
 				product = update_default_variant_properties(
 					product,
 					is_stock_item=template_item.is_stock_item,
-					price=item.get(ITEM_SELLING_RATE_FIELD),
+					price=_get_selling_rate(item),
 					weight=weight,
 					weight_unit=weight_unit,
 				)
 			elif is_successful:
-				variant_attributes = {"sku": item.item_code, "price": item.get(ITEM_SELLING_RATE_FIELD)}
+				variant_attributes = {"sku": item.item_code, "price": _get_selling_rate(item, template_item)}
 				max_index_range = min(3, len(template_item.attributes))
 				for i in range(0, max_index_range):
 					attr = template_item.attributes[i]
@@ -705,7 +741,63 @@ def map_erpnext_variant_to_shopify_variant(shopify_product: dict, erpnext_item, 
 					).insert()
 				break
 		if not variant_product_id:
-			msgprint(_("Shopify: Couldn't sync item variant."))
+			variant_product_id = _create_shopify_variant(shopify_product, erpnext_item, variant_attributes)
+	return variant_product_id
+
+
+def _create_shopify_variant(shopify_product: dict, erpnext_item, variant_attributes) -> str | None:
+	"""Create a new variant on an existing Shopify product for an ERPNext
+	variant that doesn't have a matching Shopify variant yet (e.g. a second
+	or later variant added after the product's first variant was already
+	synced, which only ever created the product with its default variant)."""
+	option_values = [
+		{"optionName": attr.attribute, "name": attr.attribute_value} for attr in erpnext_item.attributes
+	]
+
+	variant_input = {
+		"price": variant_attributes.get("price"),
+		"optionValues": option_values,
+		"inventoryItem": {"sku": variant_attributes.get("sku")},
+	}
+
+	response = json.loads(
+		GraphQL().execute(
+			_VARIANTS_BULK_CREATE_MUTATION,
+			{
+				"productId": f"gid://shopify/Product/{shopify_product.get('id')}",
+				"variants": [variant_input],
+			},
+		)
+	)
+	result = response.get("data", {}).get("productVariantsBulkCreate") or {}
+	user_errors = result.get("userErrors") or []
+	created_variants = result.get("productVariants") or []
+
+	if response.get("errors") or user_errors or not created_variants:
+		create_shopify_log(
+			status="Error",
+			response_data=response,
+			exception=response.get("errors") or user_errors or "No variant returned",
+		)
+		msgprint(_("Shopify: Couldn't sync item variant."))
+		return None
+
+	variant = created_variants[0]
+	variant_product_id = _gid_to_id(variant.get("id"))
+
+	if not frappe.flags.in_test:
+		frappe.get_doc(
+			{
+				"doctype": "Ecommerce Item",
+				"erpnext_item_code": erpnext_item.name,
+				"integration": MODULE_NAME,
+				"integration_item_code": str(shopify_product.get("id")),
+				"variant_id": variant_product_id,
+				"sku": str(variant.get("sku")),
+				"variant_of": erpnext_item.variant_of,
+			}
+		).insert()
+
 	return variant_product_id
 
 
