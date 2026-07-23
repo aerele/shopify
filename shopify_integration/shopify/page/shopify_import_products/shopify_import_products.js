@@ -15,6 +15,8 @@ shopify.ProductImporter = class {
 	constructor(wrapper) {
 		this.wrapper = $(wrapper).find(".layout-main-section");
 		this.page = wrapper.page;
+		this.searchTerm = "";
+		this.pageSize = 20;
 		this.init();
 		this.syncRunning = false;
 	}
@@ -45,13 +47,23 @@ shopify.ProductImporter = class {
 	addMarkup() {
 		const _markup = $(`
             <div class="row">
-                <div class="col-lg-8 d-flex align-items-stretch">
+                <div class="col-lg-9 d-flex align-items-stretch">
                     <div class="card border-0 shadow-sm p-3 mb-3 w-100 rounded-sm" style="background-color: var(--card-bg)">
                         <h5 class="border-bottom pb-2">Products in Shopify</h5>
+                        <div class="mb-3 shopify-product-toolbar">
+                            <div class="shopify-product-search" style="width: 50%;">
+                                <input type="text" class="form-control input-sm" id="shopify-product-search"
+                                    placeholder="Search by product ID or name" autocomplete="off">
+                            </div>
+                        </div>
                         <div id="shopify-product-list">
                             <div class="text-center">Loading...</div>
                         </div>
                         <div class="shopify-datatable-footer mt-2 pt-3 pb-2 border-top text-right" style="display: none">
+                            <div class="btn-group shopify-page-size-group mr-2" role="group" aria-label="Page size">
+                                <button type="button" class="btn btn-sm btn-default btn-page-size active" data-page-size="20">20</button>
+                                <button type="button" class="btn btn-sm btn-default btn-page-size" data-page-size="50">50</button>
+                            </div>
                             <div class="btn-group">
                                 <button type="button" class="btn btn-sm btn-default btn-paginate btn-prev">Prev</button>
                                 <button type="button" class="btn btn-sm btn-default btn-paginate btn-next">Next</button>
@@ -59,7 +71,7 @@ shopify.ProductImporter = class {
                         </div>
                     </div>
                 </div>
-                <div class="col-lg-4 d-flex align-items-stretch">
+                <div class="col-lg-3 d-flex align-items-stretch">
                     <div class="w-100">
                         <div class="card border-0 shadow-sm p-3 mb-3 rounded-sm" style="background-color: var(--card-bg)">
                             <h5 class="border-bottom pb-2">Synchronization Details</h5>
@@ -163,7 +175,7 @@ shopify.ProductImporter = class {
 				message: { products, nextUrl, prevUrl },
 			} = await frappe.call({
 				method: "shopify_integration.shopify.page.shopify_import_products.shopify_import_products.get_shopify_products",
-				args: { from_ },
+				args: { from_, limit: this.pageSize, search_term: this.searchTerm || null },
 			});
 			this.nextUrl = nextUrl;
 			this.prevUrl = prevUrl;
@@ -246,6 +258,13 @@ shopify.ProductImporter = class {
 		// pagination
 		this.wrapper.on("click", ".btn-prev,.btn-next", (e) => this.switchPage(e));
 
+		// search (debounced live GraphQL search, not a client-side filter)
+		const debouncedSearch = frappe.utils.debounce(() => this.onSearchChange(), 300);
+		this.wrapper.on("input", "#shopify-product-search", debouncedSearch);
+
+		// page size
+		this.wrapper.on("click", ".btn-page-size", (e) => this.onPageSizeChange(e));
+
 		// sync all products
 		this.wrapper.on("click", "#btn-sync-all", (e) => this.syncAll(e));
 	}
@@ -272,20 +291,38 @@ shopify.ProductImporter = class {
 		return status;
 	}
 
-	async switchPage({ currentTarget }) {
-		const _this = $(currentTarget);
-
-		$(".btn-paginate").prop("disabled", true);
+	async _reloadProducts(from_) {
+		$(".btn-paginate, .btn-page-size").prop("disabled", true);
 		this.shopifyProductTable.showToastMessage("Loading...");
 
-		const newProducts = await this.fetchShopifyProducts(
-			_this.hasClass("btn-next") ? this.nextUrl : this.prevUrl
-		);
-
+		const newProducts = await this.fetchShopifyProducts(from_);
 		this.shopifyProductTable.refresh(newProducts);
 
-		$(".btn-paginate").prop("disabled", false);
+		$(".btn-paginate, .btn-page-size").prop("disabled", false);
 		this.shopifyProductTable.clearToastMessage();
+	}
+
+	async switchPage({ currentTarget }) {
+		const _this = $(currentTarget);
+		await this._reloadProducts(_this.hasClass("btn-next") ? this.nextUrl : this.prevUrl);
+	}
+
+	async onSearchChange() {
+		const term = this.wrapper.find("#shopify-product-search").val().trim();
+		if (term === this.searchTerm) return;
+		this.searchTerm = term;
+		await this._reloadProducts(null);
+	}
+
+	async onPageSizeChange({ currentTarget }) {
+		const _this = $(currentTarget);
+		const newSize = parseInt(_this.attr("data-page-size"), 10);
+		if (newSize === this.pageSize) return;
+
+		this.pageSize = newSize;
+		this.wrapper.find(".btn-page-size").removeClass("active");
+		_this.addClass("active");
+		await this._reloadProducts(null);
 	}
 
 	syncAll() {

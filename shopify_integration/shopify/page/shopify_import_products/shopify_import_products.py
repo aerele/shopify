@@ -1,9 +1,11 @@
 import json
+import re
 from time import process_time
 
 import frappe
 from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
 from frappe.exceptions import UniqueValidationError
+from frappe.utils import cint
 from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
@@ -23,16 +25,50 @@ def _gid_to_id(gid) -> str:
 	return str(gid).rsplit("/", 1)[-1]
 
 
+def _build_product_search_query(search_term):
+	"""Translate a single combined search-box value into a Shopify Admin API
+	search-string (the `query:` DSL already used in order.py's
+	_fetch_old_orders). Combines a wildcard title match with a numeric id
+	match via OR.
+
+	Shopify's search DSL treats `: " ( ) *` as syntax characters - live
+	testing against shopify.localhost confirmed that a raw term containing
+	one of these (e.g. "(Sample) Coconut Bar Soap") silently breaks the
+	query and returns an unrelated broad result set instead of erroring, so
+	those characters are stripped from the term before it's embedded in the
+	wildcard clause. Plain alphanumeric wildcard terms (e.g. "title:*sam*")
+	were confirmed to return precise, correct substring matches."""
+	term = (search_term or "").strip()
+	if not term:
+		return None
+
+	sanitized = re.sub(r'[:"()*]', " ", term)
+	sanitized = " ".join(sanitized.split())
+	if not sanitized:
+		return None
+
+	clauses = [f"title:*{sanitized}*"]
+	if sanitized.isdigit():
+		clauses.append(f"id:{sanitized}")
+
+	return " OR ".join(clauses)
+
+
 @frappe.whitelist()
-def get_shopify_products(from_=None):
-	shopify_products = fetch_all_products(from_)
+def get_shopify_products(from_: str | None = None, limit: int = 20, search_term: str | None = None):
+	limit = cint(limit) or 20
+	if limit not in (20, 50):
+		limit = 20
+
+	query = _build_product_search_query(search_term)
+	shopify_products = fetch_all_products(from_, limit=limit, query=query)
 	return shopify_products
 
 
-def fetch_all_products(from_=None):
+def fetch_all_products(from_=None, limit=20, query=None):
 	# format shopify collection for datatable
 
-	collection = _fetch_products_from_shopify(from_)
+	collection = _fetch_products_from_shopify(from_, limit=limit, query=query)
 
 	products = collection["products"]
 	for product in products:
@@ -46,8 +82,8 @@ def fetch_all_products(from_=None):
 
 
 _PRODUCTS_LIST_QUERY = """
-query products($first: Int, $after: String, $last: Int, $before: String) {
-	products(first: $first, after: $after, last: $last, before: $before) {
+query products($first: Int, $after: String, $last: Int, $before: String, $query: String) {
+	products(first: $first, after: $after, last: $last, before: $before, query: $query) {
 		edges {
 			node {
 				id
@@ -88,13 +124,13 @@ def _decode_cursor(from_):
 
 
 @temp_shopify_session
-def _fetch_products_from_shopify(from_=None, limit=20):
+def _fetch_products_from_shopify(from_=None, limit=20, query=None):
 	cursor, direction = _decode_cursor(from_)
 
 	if direction == "prev":
-		variables = {"last": limit, "before": cursor}
+		variables = {"last": limit, "before": cursor, "query": query}
 	else:
-		variables = {"first": limit, "after": cursor}
+		variables = {"first": limit, "after": cursor, "query": query}
 
 	response = json.loads(GraphQL().execute(_PRODUCTS_LIST_QUERY, variables))
 	products_data = response.get("data", {}).get("products", {})
