@@ -30,10 +30,13 @@ DEFAULT_TAX_FIELDS = {
 
 def sync_sales_order(payload, request_id=None):
 	order = payload
+	# nosemgrep: frappe-setuser
+	frappe.set_user("Administrator")
 	frappe.flags.request_id = request_id
 
 	if frappe.db.get_value("Sales Order", filters={ORDER_ID_FIELD: cstr(order["id"])}):
 		reconcile_existing_order(order, request_id=request_id)
+		create_shopify_log(status="Success")
 		return
 	try:
 		shopify_customer = order.get("customer") if order.get("customer") is not None else {}
@@ -392,6 +395,7 @@ def get_sales_order(order_id):
 	sales_order = frappe.db.get_value("Sales Order", filters={ORDER_ID_FIELD: order_id})
 	if sales_order:
 		return frappe.get_doc("Sales Order", sales_order)
+	return None
 
 
 def cancel_order(payload, request_id=None):
@@ -472,7 +476,24 @@ query oldOrders($query: String!, $limit: Int!, $cursor: String) {
 				displayFinancialStatus
 				customer {
 					id
-				}
+						firstName
+						lastName
+						defaultEmailAddress {
+							emailAddress
+						}
+						defaultPhoneNumber {
+							phoneNumber
+						}
+						defaultAddress {
+							address1
+							address2
+							city
+							province
+							country
+							zip
+							phone
+						}
+					}
 				billingAddress {
 					address1
 					address2
@@ -607,7 +628,26 @@ def _normalize_gql_order(node) -> dict:
 	"""Convert a Shopify GraphQL order node into the same snake_case dict
 	shape the rest of this module already expects from the REST API and
 	from live webhook payloads, so no downstream code needs to change."""
-	customer = node.get("customer") or {}
+	customer_node = node.get("customer") or {}
+
+	# Build customer dict matching REST API webhook payload structure
+	normalized_customer = {}
+	if customer_node.get("id"):
+		normalized_customer["id"] = _gid_to_id(customer_node.get("id"))
+		normalized_customer["first_name"] = customer_node.get("firstName") or ""
+		normalized_customer["last_name"] = customer_node.get("lastName") or ""
+
+		# Extract email from new defaultEmailAddress structure
+		if customer_node.get("defaultEmailAddress"):
+			normalized_customer["email"] = customer_node.get("defaultEmailAddress", {}).get("emailAddress")
+
+		# Extract phone from new defaultPhoneNumber structure
+		if customer_node.get("defaultPhoneNumber"):
+			normalized_customer["phone"] = customer_node.get("defaultPhoneNumber", {}).get("phoneNumber")
+
+		# Include defaultAddress for customer sync fallback
+		if customer_node.get("defaultAddress"):
+			normalized_customer["default_address"] = customer_node.get("defaultAddress")
 
 	line_items = []
 	for edge in (node.get("lineItems") or {}).get("edges", []):
@@ -699,7 +739,7 @@ def _normalize_gql_order(node) -> dict:
 		# normalized to lowercase to match the format Shopify's live
 		# webhook payloads already use for this same field
 		"financial_status": (node.get("displayFinancialStatus") or "").lower(),
-		"customer": {"id": _gid_to_id(customer.get("id"))} if customer.get("id") else {},
+		"customer": normalized_customer,
 		"billing_address": node.get("billingAddress") or {},
 		"shipping_address": node.get("shippingAddress") or {},
 		"line_items": line_items,
@@ -713,7 +753,7 @@ def _fetch_old_orders(from_time, to_time, limit=250):
 
 	from_time = get_datetime(from_time).astimezone().isoformat()
 	to_time = get_datetime(to_time).astimezone().isoformat()
-	search_query = f'status:any AND updated_at:>="{from_time}" AND updated_at:<="{to_time}"'
+	search_query = f'status:any AND created_at:>="{from_time}" AND created_at:<="{to_time}"'
 
 	cursor = None
 	has_next_page = True

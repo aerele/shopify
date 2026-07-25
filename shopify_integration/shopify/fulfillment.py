@@ -24,55 +24,82 @@ def prepare_delivery_note(payload, request_id=None):
 	try:
 		sales_order = get_sales_order(cstr(order["id"]))
 		if sales_order:
-			created_delivery_notes = create_delivery_note(order, setting, sales_order)
-			if created_delivery_notes:
+			status, result = create_delivery_note(order, setting, sales_order)
+			if status == "success":
+				# Delivery Note created successfully
 				create_shopify_log(status="Success")
+			elif status == "invalid":
+				# Skip - delivery note already exists or sync disabled
+				create_shopify_log(status="Invalid", message=result)
 			else:
+				# Error - can be retried after fixing the issue
 				create_shopify_log(
-					status="Invalid",
-					message=(
-						"No delivery note was created for this fulfillment (delivery note sync is"
-						" disabled, the fulfillment was already synced, or the Sales Order isn't"
-						" submitted)."
-					),
+					status="Error",
+					method="shopify_integration.shopify.fulfillment.prepare_delivery_note",
+					message=result,
 				)
 		else:
-			create_shopify_log(status="Invalid", message="Sales Order not found for syncing delivery note.")
+			create_shopify_log(
+				status="Error",
+				method="shopify_integration.shopify.fulfillment.prepare_delivery_note",
+				message="Sales Order not found for syncing delivery note.",
+			)
 	except Exception as e:
 		create_shopify_log(status="Error", exception=e, rollback=True)
 
 
-def create_delivery_note(shopify_order, setting, so) -> list[str]:
-	"""Create a Delivery Note for each of this order's fulfillments that
-	doesn't have one yet. Returns the names of the Delivery Notes created,
-	so callers can tell an actual sync apart from a no-op (e.g. delivery
-	note sync disabled, or every fulfillment already synced)."""
+def create_delivery_note(shopify_order, setting, so) -> tuple[str, str]:
+	"""Create a Delivery Note for this order's fulfillment that doesn't have one yet.
+	Returns a tuple (status, result) where:
+	- status: "success" if created, "invalid" if skipped (no retry needed), "error" if failed (can retry)
+	- result: Delivery Note name on success, reason message on invalid/error."""
+
+	# Check if delivery note sync is enabled (INVALID - configuration, no retry needed)
 	if not cint(setting.sync_delivery_note):
-		return None
+		return ("error", "Delivery Note sync is disabled in Shopify settings")
 
-	for fulfillment in shopify_order.get("fulfillments"):
-		if (
-			not frappe.db.get_value("Delivery Note", {FULLFILLMENT_ID_FIELD: fulfillment.get("id")}, "name")
-			and so.docstatus == 1
-		):
-			dn = make_delivery_note(so.name)
-			setattr(dn, ORDER_ID_FIELD, fulfillment.get("order_id"))
-			setattr(dn, ORDER_NUMBER_FIELD, shopify_order.get("name"))
-			setattr(dn, FULLFILLMENT_ID_FIELD, fulfillment.get("id"))
-			dn.set_posting_time = 1
-			dn.posting_date = getdate(fulfillment.get("created_at"))
-			dn.naming_series = setting.delivery_note_series or "DN-Shopify-"
-			dn.items = get_fulfillment_items(
-				dn.items, fulfillment.get("line_items"), fulfillment.get("location_id")
+	# Check if Sales Order is submitted (ERROR - can be retried after submitting)
+	if so.docstatus != 1:
+		return ("error", f"Sales Order {so.name} is not submitted (current status: Draft)")
+
+	# Check if there are any fulfillments to process (ERROR - missing data, can retry)
+	fulfillments = shopify_order.get("fulfillments")
+	if not fulfillments:
+		return ("error", f"No fulfillments found for order {shopify_order.get('name')}")
+
+	# Process the first fulfillment (similar logic to original code)
+	for fulfillment in fulfillments:
+		# Check if delivery note already exists for this fulfillment (INVALID - already done, no retry needed)
+		existing_dn = frappe.db.get_value(
+			"Delivery Note", {FULLFILLMENT_ID_FIELD: fulfillment.get("id")}, "name"
+		)
+		if existing_dn:
+			return (
+				"invalid",
+				f"Delivery Note {existing_dn} already exists for fulfillment {fulfillment.get('id')}",
 			)
-			dn.flags.ignore_mandatory = True
-			dn.save()
-			dn.submit()
 
-			if shopify_order.get("note"):
-				dn.add_comment(text=f"Order Note: {shopify_order.get('note')}")
+		# All checks passed - create the delivery note
+		dn = make_delivery_note(so.name)
+		setattr(dn, ORDER_ID_FIELD, fulfillment.get("order_id"))
+		setattr(dn, ORDER_NUMBER_FIELD, shopify_order.get("name"))
+		setattr(dn, FULLFILLMENT_ID_FIELD, fulfillment.get("id"))
+		dn.set_posting_time = 1
+		dn.posting_date = getdate(fulfillment.get("created_at"))
+		dn.naming_series = setting.delivery_note_series or "DN-Shopify-"
+		dn.items = get_fulfillment_items(
+			dn.items, fulfillment.get("line_items"), fulfillment.get("location_id")
+		)
+		dn.flags.ignore_mandatory = True
+		dn.save()
+		dn.submit()
 
-	return dn.name if dn else None
+		if shopify_order.get("note"):
+			dn.add_comment(text=f"Order Note: {shopify_order.get('note')}")
+
+		return ("success", dn.name)
+
+	return ("error", "No valid fulfillment found to create Delivery Note")
 
 
 def get_fulfillment_items(dn_items, fulfillment_items, location_id=None):

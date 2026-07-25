@@ -921,3 +921,16 @@ def write_upload_log(status: bool, product: dict | None, item, action="Created")
 			message=f"{action} Item: {item.name}, shopify product: {product.get('id')}",
 			method="upload_erpnext_item",
 		)
+
+
+@frappe.whitelist()
+def is_item_synced_from_shopify(item_code: str) -> dict:
+	"""Return whether the ERPNext item is synced with Shopify.
+
+	Used by the client script to make the `has_variants` field read-only.
+	"""
+	ecommerce_item = frappe.db.get_value(
+		"Ecommerce Item", {"erpnext_item_code": item_code, "integration": MODULE_NAME}, "name"
+	)
+
+	return {"is_synced": bool(ecommerce_item)}
