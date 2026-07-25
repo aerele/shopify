@@ -123,11 +123,15 @@ def create_sales_order(shopify_order, setting, company=None):
 	so = frappe.db.get_value("Sales Order", {ORDER_ID_FIELD: shopify_order.get("id")}, "name")
 
 	if not so:
+		# Analyze all discounts (both order-level and item-level) in one pass
+		discount_info = _analyze_all_discounts(shopify_order)
+
 		items = get_order_items(
 			shopify_order.get("line_items"),
 			setting,
 			getdate(shopify_order.get("created_at")),
 			taxes_inclusive=shopify_order.get("taxes_included"),
+			discount_info=discount_info,
 		)
 
 		if not items:
@@ -143,23 +147,33 @@ def create_sales_order(shopify_order, setting, company=None):
 			return ""
 
 		taxes = get_order_taxes(shopify_order, setting, items)
-		so = frappe.get_doc(
-			{
-				"doctype": "Sales Order",
-				"naming_series": setting.sales_order_series or "SO-Shopify-",
-				ORDER_ID_FIELD: str(shopify_order.get("id")),
-				ORDER_NUMBER_FIELD: shopify_order.get("name"),
-				"customer": customer,
-				"transaction_date": getdate(shopify_order.get("created_at")) or nowdate(),
-				"delivery_date": getdate(shopify_order.get("created_at")) or nowdate(),
-				"company": setting.company,
-				"selling_price_list": get_dummy_price_list(),
-				"ignore_pricing_rule": 1,
-				"items": items,
-				"taxes": taxes,
-				"tax_category": get_dummy_tax_category(),
-			}
-		)
+
+		# Build Sales Order document
+		so_dict = {
+			"doctype": "Sales Order",
+			"naming_series": setting.sales_order_series or "SO-Shopify-",
+			ORDER_ID_FIELD: str(shopify_order.get("id")),
+			ORDER_NUMBER_FIELD: shopify_order.get("name"),
+			"customer": customer,
+			"transaction_date": getdate(shopify_order.get("created_at")) or nowdate(),
+			"delivery_date": getdate(shopify_order.get("created_at")) or nowdate(),
+			"company": setting.company,
+			"selling_price_list": get_dummy_price_list(),
+			"ignore_pricing_rule": 1,
+			"items": items,
+			"taxes": taxes,
+			"tax_category": get_dummy_tax_category(),
+		}
+
+		# Add order-level discount fields at HEADER level if applicable
+		if discount_info and discount_info.get("order_level"):
+			so_dict["apply_discount_on"] = "Net Total"
+			if discount_info["order_level"]["type"] == "percentage":
+				so_dict["additional_discount_percentage"] = discount_info["order_level"]["value"]
+			else:
+				so_dict["discount_amount"] = discount_info["order_level"]["value"]
+
+		so = frappe.get_doc(so_dict)
 
 		if company:
 			so.update({"company": company, "status": "Draft"})
@@ -177,7 +191,19 @@ def create_sales_order(shopify_order, setting, company=None):
 	return so
 
 
-def get_order_items(order_items, setting, delivery_date, taxes_inclusive):
+def get_order_items(order_items, setting, delivery_date, taxes_inclusive, discount_info=None):
+	"""
+	Build item list for Sales Order.
+	Handles all 6 discount scenarios using unified discount_info.
+
+	Scenarios handled:
+	1. Item-level percentage only
+	2. Item-level amount only
+	3. Order-level percentage only
+	4. Order-level amount only
+	5. Mixed: Item-level + Order-level percentage
+	6. Mixed: Item-level + Order-level amount
+	"""
 	items = []
 	all_product_exists = True
 	product_not_exists = []
@@ -192,46 +218,162 @@ def get_order_items(order_items, setting, delivery_date, taxes_inclusive):
 
 		if all_product_exists:
 			item_code = get_item_code(shopify_item)
-			items.append(
-				{
-					"item_code": item_code,
-					"item_name": shopify_item.get("name"),
-					"rate": _get_item_price(shopify_item, taxes_inclusive),
-					"delivery_date": delivery_date,
-					"qty": shopify_item.get("quantity"),
-					"stock_uom": shopify_item.get("uom") or "Nos",
-					"warehouse": setting.warehouse,
-					ORDER_ITEM_DISCOUNT_FIELD: (
-						_get_total_discount(shopify_item) / cint(shopify_item.get("quantity"))
-					),
-				}
-			)
+			item_dict = {
+				"item_code": item_code,
+				"item_name": shopify_item.get("name"),
+				"delivery_date": delivery_date,
+				"qty": shopify_item.get("quantity"),
+				"stock_uom": shopify_item.get("uom") or "Nos",
+				"warehouse": setting.warehouse,
+			}
+
+			# Get original Shopify price
+			original_price = flt(shopify_item.get("price"))
+			qty = cint(shopify_item.get("quantity"))
+
+			# Set price_list_rate to original Shopify price (before any discounts)
+			item_dict["price_list_rate"] = original_price
+
+			# Get item-level discount info from unified discount_info
+			item_discount = None
+			if discount_info and discount_info.get("items"):
+				# OPTIMIZATION: O(1) dict lookup instead of O(n) list search
+				item_id = str(shopify_item.get("id"))
+				item_discount = discount_info["items"].get(item_id)
+
+			# Apply ITEM-LEVEL discounts only (order-level handled at Sales Order header)
+			if item_discount and item_discount.get("has_item_level_discount"):
+				item_discount_amount = item_discount["item_discount_amount"]
+
+				if item_discount["item_discount_type"] == "percentage":
+					# Item-level percentage discount
+					item_dict["discount_percentage"] = item_discount["item_discount_value"]
+				else:
+					# Item-level amount discount
+					item_dict["discount_amount"] = item_discount_amount
+
+				# Store in shopify_item_discount for reference
+				item_dict[ORDER_ITEM_DISCOUNT_FIELD] = item_discount_amount
+
+				# Calculate rate (item-level only, order-level applied by ERPNext)
+				item_dict["rate"] = original_price - (item_discount_amount / qty)
+			else:
+				# No item-level discount, rate = original price
+				item_dict["rate"] = original_price
+
+			items.append(item_dict)
 		else:
 			items = []
 
 	return items
 
 
-def _get_item_price(line_item, taxes_inclusive: bool) -> float:
-	price = flt(line_item.get("price"))
-	qty = cint(line_item.get("quantity"))
+def _analyze_all_discounts(shopify_order):
+	"""
+	Unified discount analysis function that handles both order-level and item-level discounts.
+	"""
+	discount_applications = shopify_order.get("discount_applications") or []
+	line_items = shopify_order.get("line_items", [])
 
-	# remove line item level discounts
-	total_discount = _get_total_discount(line_item)
+	result = {
+		"order_level": None,
+		"items": {},  # Dict for O(1) lookup instead of list
+	}
 
-	if not taxes_inclusive:
-		return price - (total_discount / qty)
+	if not discount_applications or not line_items:
+		return result
 
-	total_taxes = 0.0
-	for tax in line_item.get("tax_lines"):
-		total_taxes += flt(tax.get("price"))
+	# OPTIMIZATION: Create lookup dict for discount applications
+	# This eliminates repeated index lookups in nested loops
+	discount_app_lookup = {}
+	order_level_discount = None
 
-	return price - (total_taxes + total_discount) / qty
+	# Single pass: build lookup dict and identify order-level discount
+	for idx, discount_app in enumerate(discount_applications):
+		discount_app_lookup[idx] = discount_app
 
+		allocation_method = discount_app.get("allocation_method")
+		target_selection = discount_app.get("target_selection")
+		value_type = discount_app.get("value_type")
+		value = flt(discount_app.get("value", 0))
 
-def _get_total_discount(line_item) -> float:
-	discount_allocations = line_item.get("discount_allocations") or []
-	return sum(flt(discount.get("amount")) for discount in discount_allocations)
+		if allocation_method == "across" and target_selection == "all":
+			if not order_level_discount:
+				order_level_discount = {
+					"type": value_type,
+					"value": value,
+					"description": discount_app.get("title", "Order-level Discount"),
+				}
+
+	if order_level_discount:
+		result["order_level"] = order_level_discount
+
+	# Process line items with O(1) app lookup
+	for line_item in line_items:
+		item_id = str(line_item.get("id"))
+		item_sku = line_item.get("sku")
+		discount_allocations = line_item.get("discount_allocations", [])
+
+		if not discount_allocations:
+			continue
+
+		item_discount_info = {
+			"item_id": item_id,
+			"item_sku": item_sku,
+			"has_item_level_discount": False,
+			"item_discount_type": None,
+			"item_discount_value": None,
+			"item_discount_amount": 0.0,
+		}
+
+		has_item_level = False
+		item_discount_type = None
+		total_item_discount = 0.0
+		percentage_values = []
+
+		# OPTIMIZATION: Direct dict lookup instead of index-based access
+		for allocation in discount_allocations:
+			amount = flt(allocation.get("amount", 0))
+			app_index = allocation.get("discount_application_index")
+
+			if app_index is not None and app_index in discount_app_lookup:
+				discount_app = discount_app_lookup[app_index]
+				app_allocation_method = discount_app.get("allocation_method")
+				app_target_selection = discount_app.get("target_selection")
+				app_value_type = discount_app.get("value_type")
+				app_value = flt(discount_app.get("value", 0))
+
+				# Check if this is an item-level discount (not order-level)
+				if not (app_allocation_method == "across" and app_target_selection == "all"):
+					has_item_level = True
+					total_item_discount += amount
+
+					if app_value_type == "percentage":
+						item_discount_type = "percentage"
+						percentage_values.append(app_value)
+					else:
+						if item_discount_type != "percentage":
+							item_discount_type = "fixed_amount"
+
+		# Build item discount info
+		if has_item_level:
+			item_discount_info["has_item_level_discount"] = True
+			item_discount_info["item_discount_type"] = item_discount_type
+			item_discount_info["item_discount_amount"] = total_item_discount
+
+			if item_discount_type == "percentage":
+				if len(percentage_values) == 1:
+					item_discount_info["item_discount_value"] = percentage_values[0]
+				else:
+					item_discount_info["item_discount_type"] = "fixed_amount"
+					item_discount_info["item_discount_value"] = total_item_discount
+			else:
+				item_discount_info["item_discount_value"] = total_item_discount
+
+			# Store in dict for O(1) lookup
+			result["items"][item_id] = item_discount_info
+
+	return result
 
 
 def get_order_taxes(shopify_order, setting, items):
@@ -493,7 +635,7 @@ query oldOrders($query: String!, $limit: Int!, $cursor: String) {
 							zip
 							phone
 						}
-					}
+				}
 				billingAddress {
 					address1
 					address2
@@ -601,13 +743,12 @@ query oldOrders($query: String!, $limit: Int!, $cursor: String) {
 					}
 				}
 			}
-		}
-		pageInfo {
-			hasNextPage
-			endCursor
+			pageInfo {
+				hasNextPage
+				endCursor
+			}
 		}
 	}
-}
 """
 
 
