@@ -1,6 +1,6 @@
 import frappe
 from erpnext.selling.doctype.sales_order.mapper import make_sales_invoice
-from frappe.utils import cint, cstr, getdate, nowdate
+from frappe.utils import cint, cstr, flt, getdate, nowdate
 
 from shopify_integration.shopify.constants import (
 	ORDER_ID_FIELD,
@@ -38,7 +38,7 @@ def prepare_sales_invoice(payload, request_id=None):
 				)
 		else:
 			create_shopify_log(
-				status="Error",
+				status="Invalid",
 				method="shopify_integration.shopify.invoice.prepare_sales_invoice",
 				message="Sales Order not found for syncing sales invoice.",
 			)
@@ -61,13 +61,13 @@ def create_sales_invoice(shopify_order, setting, so) -> tuple[str, str]:
 	if so.docstatus != 1:
 		return ("error", f"Sales Order {so.name} is not submitted (current status: Draft)")
 
-	# Check if Sales Order is already fully billed (INVALID - already done, no retry needed)
-	if so.per_billed:
-		return ("invalid", f"Sales Order {so.name} is already fully billed ({so.per_billed}% billed)")
+		# Check if Sales Order is already fully billed (INVALID - already done, no retry needed)
+		if flt(so.per_billed) == 100:
+			return ("invalid", f"Sales Order {so.name} is already fully billed ({so.per_billed}% billed)")
 
 	# Check if sales invoice sync is enabled (INVALID - configuration, no retry needed)
 	if not cint(setting.sync_sales_invoice):
-		return ("invalid", "Sales Invoice sync is disabled in Shopify settings")
+		return ("Error", "Sales Invoice sync is disabled in Shopify settings")
 
 	# All checks passed - create the invoice
 	posting_date = getdate(shopify_order.get("created_at")) or nowdate()
@@ -84,7 +84,7 @@ def create_sales_invoice(shopify_order, setting, so) -> tuple[str, str]:
 	sales_invoice.insert(ignore_mandatory=True)
 	sales_invoice.submit()
 	if sales_invoice.grand_total > 0:
-		make_payament_entry_against_sales_invoice(sales_invoice, setting, posting_date)
+		make_payment_entry_against_sales_invoice(sales_invoice, setting, posting_date)
 
 	if shopify_order.get("note"):
 		sales_invoice.add_comment(text=f"Order Note: {shopify_order.get('note')}")
@@ -97,7 +97,7 @@ def set_cost_center(items, cost_center):
 		item.cost_center = cost_center
 
 
-def make_payament_entry_against_sales_invoice(doc, setting, posting_date=None):
+def make_payment_entry_against_sales_invoice(doc, setting, posting_date=None):
 	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
 
 	payment_entry = get_payment_entry(doc.doctype, doc.name, bank_account=setting.cash_bank_account)

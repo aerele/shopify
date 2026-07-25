@@ -925,10 +925,9 @@ def write_upload_log(status: bool, product: dict | None, item, action="Created")
 
 @frappe.whitelist()
 def is_item_synced_from_shopify(item_code: str) -> dict:
-	"""Check if an item is synced from Shopify.
+	"""Return whether the ERPNext item is synced with Shopify.
 
-	Returns a dict with 'is_synced' key set to True if the item is synced.
-	This is used by the client script to make has_variants field read-only.
+	Used by the client script to make the `has_variants` field read-only.
 	"""
 	ecommerce_item = frappe.db.get_value(
 		"Ecommerce Item", {"erpnext_item_code": item_code, "integration": MODULE_NAME}, "name"
