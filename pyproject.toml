@@ -1,10 +1,10 @@
 [project]
 name = "shopify_integration"
 authors = [
-    { name = "Aerele Technologies", email = "bhavathariniya13@gmail.com"}
+    { name = "Aerele Technologies", email = "integrations-support@aerele.in"}
 ]
 description = "Shopify ERPNext Integration"
-requires-python = ">=3.10"
+requires-python = ">=3.14,<3.15"
 readme = "README.md"
 dynamic = ["version"]
 dependencies = [
@@ -16,6 +16,11 @@ dependencies = [
 requires = ["flit_core >=3.4,<4"]
 build-backend = "flit_core.buildapi"
 
+[tool.bench.frappe-dependencies]
+frappe = ">=16.0.0-dev,<=17.0.0-dev"
+erpnext = ">=16.0.0-dev,<=17.0.0-dev"
+ecommerce_core = ">=0.0.1"
+
 # These dependencies are only installed when developer mode is enabled
 [tool.bench.dev-dependencies]
 # package_name = "~=1.1.0"
@@ -26,7 +31,7 @@ packages = []
 
 [tool.ruff]
 line-length = 110
-target-version = "py310"
+# target-version is inferred from project.requires-python
 
 [tool.ruff.lint]
 select = [

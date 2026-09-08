@@ -2,7 +2,7 @@ app_name = "shopify_integration"
 app_title = "Shopify Integration"
 app_publisher = "Aerele Technologies"
 app_description = "Shopify ERPNext Integration"
-app_email = "bhavathariniya13@gmail.com"
+app_email = "integrations-support@aerele.in"
 app_license = "mit"
 
 # Apps
