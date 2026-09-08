@@ -2,6 +2,7 @@ import json
 from typing import Literal, Optional
 
 import frappe
+from ecommerce_core.utils.integration_log import run_integration_job
 from ecommerce_core.utils.price_list import get_dummy_price_list
 from ecommerce_core.utils.taxation import get_dummy_tax_category
 from frappe import _
@@ -12,6 +13,7 @@ from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import (
 	CUSTOMER_ID_FIELD,
 	EVENT_MAPPER,
+	MODULE_NAME,
 	ORDER_ID_FIELD,
 	ORDER_ITEM_DISCOUNT_FIELD,
 	ORDER_NUMBER_FIELD,
@@ -29,13 +31,23 @@ DEFAULT_TAX_FIELDS = {
 
 
 def sync_sales_order(payload, request_id=None):
+	return run_integration_job(
+		MODULE_NAME,
+		_sync_sales_order,
+		payload,
+		request_id=request_id,
+		method="shopify_integration.shopify.order.sync_sales_order",
+		request_data=payload,
+		set_user="Administrator",
+		success_status=None,
+	)
+
+
+def _sync_sales_order(payload):
 	order = payload
-	# nosemgrep: frappe-setuser
-	frappe.set_user("Administrator")
-	frappe.flags.request_id = request_id
 
 	if frappe.db.get_value("Sales Order", filters={ORDER_ID_FIELD: cstr(order["id"])}):
-		reconcile_existing_order(order, request_id=request_id)
+		reconcile_existing_order(order)
 		create_shopify_log(status="Success")
 		return
 	try:
@@ -56,7 +68,7 @@ def sync_sales_order(payload, request_id=None):
 		create_order(order, setting)
 
 		if order.get("cancelled_at"):
-			cancel_order(order, request_id=request_id)
+			cancel_order(order)
 	except Exception as e:
 		create_shopify_log(status="Error", exception=e, rollback=True)
 	else:
@@ -71,10 +83,11 @@ def reconcile_existing_order(order, request_id=None):
 
 	Only ever called from sync_sales_order(), which has already set the
 	user/request_id for this job, so it doesn't need to set them again."""
-	frappe.flags.request_id = request_id
+	if request_id is not None:
+		frappe.flags.request_id = request_id
 
 	if order.get("cancelled_at"):
-		cancel_order(order, request_id=request_id)
+		cancel_order(order)
 		return
 
 	# local import to avoid circular dependencies
@@ -549,7 +562,8 @@ def cancel_order(payload, request_id=None):
 
 	IF sales invoice / delivery notes are not generated against an order, then cancel it.
 	"""
-	frappe.flags.request_id = request_id
+	if request_id is not None:
+		frappe.flags.request_id = request_id
 
 	order = payload
 
