@@ -3,7 +3,7 @@ app_title = "Shopify Integration"
 app_publisher = "Aerele Technologies"
 app_description = "Shopify ERPNext Integration"
 app_email = "integrations-support@aerele.in"
-app_license = "mit"
+app_license = "GNU GPL v3.0"
 
 # Apps
 # ------------------

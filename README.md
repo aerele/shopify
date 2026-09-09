@@ -9,7 +9,7 @@
 
 [![CI](https://github.com/aerele/shopify/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/aerele/shopify/actions/workflows/ci.yml)
 [![Linters](https://github.com/aerele/shopify/actions/workflows/linters.yml/badge.svg?branch=develop)](https://github.com/aerele/shopify/actions/workflows/linters.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](license.txt)
+[![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](license.txt)
 
 </div>
 
@@ -182,7 +182,7 @@ tests for changed behaviour, and target the `develop` branch.
 
 ## License
 
-[MIT License](license.txt)
+[GNU General Public License v3.0](license.txt)
 
 <br>
 <br>
