@@ -663,11 +663,23 @@ class TestShopifySettingAuth(unittest.TestCase):
 
 	def test_new_plaintext_password_is_blocked_while_enabled(self):
 		setting = self._make_setting(password="new-token")
-		setting.get_doc_before_save = lambda: frappe._dict(enable_shopify=1)
+		previous = MagicMock(enable_shopify=1)
+		previous.get_password.return_value = "old-token"
+		setting.get_doc_before_save = lambda: previous
 		setting.has_value_changed = lambda fieldname: False
 
 		with self.assertRaises(frappe.ValidationError):
 			setting._validate_authentication_change()
+
+	def test_same_plaintext_password_is_allowed_while_enabled(self):
+		setting = self._make_setting(password="token")
+		previous = MagicMock(enable_shopify=1)
+		previous.get_password.return_value = "token"
+		setting.get_doc_before_save = lambda: previous
+		setting.has_value_changed = lambda fieldname: False
+
+		setting._validate_authentication_change()
+		previous.get_password.assert_called_once_with("password", raise_exception=False)
 
 	@patch("shopify_integration.shopify.doctype.shopify_setting.shopify_setting.create_shopify_log")
 	def test_before_save_skips_second_token_mint(self, mock_log):

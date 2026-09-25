@@ -144,15 +144,21 @@ class ShopifySetting(SettingController):
 			"shared_secret",
 			"client_id",
 		)
-		password_changed = any(
-			self.get(fieldname) and not self.is_dummy_password(self.get(fieldname))
-			for fieldname in ("password", "client_secret")
-		)
-		if password_changed or any(self.has_value_changed(fieldname) for fieldname in non_password_fields):
+		if any(self.has_value_changed(fieldname) for fieldname in non_password_fields) or any(
+			self._has_password_changed(fieldname, previous) for fieldname in ("password", "client_secret")
+		):
 			frappe.throw(
 				_("Disable Shopify and save before changing the shop or authentication credentials."),
 				title=_("Disable Shopify First"),
 			)
+
+	def _has_password_changed(self, fieldname: str, previous) -> bool:
+		"""Return whether a newly entered secret differs from the stored value."""
+		value = self.get(fieldname)
+		if not value or self.is_dummy_password(value):
+			return False
+
+		return value != previous.get_password(fieldname, raise_exception=False)
 
 	def _get_password_safe(self, fieldname: str) -> str:
 		"""
