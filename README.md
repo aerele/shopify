@@ -108,10 +108,33 @@ workers are running, then open **Shopify Setting** from the Shopify workspace.
 
 **1. Connect**
 
-Enter the Shop URL, the access token, and the shared secret, then select **Enable
-Shopify** and save. Saving registers the webhooks this app listens for on your
-shop, and clearing the checkbox removes them again. The registered topics are
-listed in the Webhooks table.
+Pick an **Authentication Method** and fill in its credentials, then select
+**Enable Shopify** and save. Saving registers the webhooks this app listens for
+on your shop, and clearing the checkbox removes them again. The registered
+topics are listed in the Webhooks table.
+
+- **Static Token** — for custom apps created directly in the Shopify Admin
+  (possible until Jan 1, 2026). Enter the Admin API access token as the
+  Password / Access Token, plus the shared secret used to verify webhooks.
+- **OAuth 2.0 Client Credentials** — for apps created in the Shopify Dev
+  Dashboard when the app and shop belong to the same Shopify organization.
+  This grant cannot access an unrelated merchant's store. Enter the Client ID
+  and Client Secret; the app fetches a short-lived (~24h) access token itself,
+  stores it encrypted, and refreshes it automatically before it expires. The
+  Client Secret is also used to verify webhook signatures. Note that these
+  tokens only work with the GraphQL Admin API, which is all this connector
+  uses. The app must be configured with the Admin API access scopes this
+  connector needs: `read_orders`, `read_products`, `write_products`,
+  `read_locations`, `read_inventory`, and `write_inventory` (Dev Dashboard →
+  app → App versions → Configuration → Admin API integration). Scopes are
+  fixed when a token is issued, so after changing them: release the app
+  version, reinstall the app on the shop, and save Shopify Setting again —
+  the cached token is discarded automatically whenever webhook registration
+  fails.
+
+  Add `read_all_orders` when importing orders older than 60 days. This scope
+  might require additional approval from Shopify and can be omitted when that
+  historical import capability is not needed.
 
 **2. Set the company defaults**
 
