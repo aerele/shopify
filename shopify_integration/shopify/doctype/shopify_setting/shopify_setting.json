@@ -83,7 +83,7 @@
   },
   {
    "default": "Static Token",
-   "description": "Select Static Token for existing apps or OAuth 2.0 for apps created after Jan 1, 2026",
+   "description": "Use OAuth 2.0 only when the Dev Dashboard app and shop belong to the same Shopify organization",
    "fieldname": "authentication_method",
    "fieldtype": "Select",
    "label": "Authentication Method",

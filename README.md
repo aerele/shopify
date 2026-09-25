@@ -117,8 +117,9 @@ topics are listed in the Webhooks table.
   (possible until Jan 1, 2026). Enter the Admin API access token as the
   Password / Access Token, plus the shared secret used to verify webhooks.
 - **OAuth 2.0 Client Credentials** — for apps created in the Shopify Dev
-  Dashboard, which no longer issue permanent tokens. Enter the Client ID and
-  Client Secret; the app fetches a short-lived (~24h) access token itself,
+  Dashboard when the app and shop belong to the same Shopify organization.
+  This grant cannot access an unrelated merchant's store. Enter the Client ID
+  and Client Secret; the app fetches a short-lived (~24h) access token itself,
   stores it encrypted, and refreshes it automatically before it expires. The
   Client Secret is also used to verify webhook signatures. Note that these
   tokens only work with the GraphQL Admin API, which is all this connector
@@ -130,6 +131,10 @@ topics are listed in the Webhooks table.
   version, reinstall the app on the shop, and save Shopify Setting again —
   the cached token is discarded automatically whenever webhook registration
   fails.
+
+  Add `read_all_orders` when importing orders older than 60 days. This scope
+  might require additional approval from Shopify and can be omitted when that
+  historical import capability is not needed.
 
 **2. Set the company defaults**
 
