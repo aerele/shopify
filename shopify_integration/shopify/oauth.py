@@ -30,6 +30,7 @@ from frappe.utils.password import remove_encrypted_password, set_encrypted_passw
 
 from shopify_integration.shopify.constants import (
 	AUTH_METHOD_OAUTH,
+	HISTORICAL_ORDERS_ACCESS_SCOPE,
 	REQUIRED_ACCESS_SCOPES,
 	SETTING_DOCTYPE,
 )
@@ -120,6 +121,18 @@ def generate_oauth_token(shopify_url: str, client_id: str, client_secret: str) -
 				).format(", ".join(missing_scopes)),
 			)
 
+		granted_scopes = {scope.strip() for scope in (granted_scope or "").split(",") if scope.strip()}
+		if HISTORICAL_ORDERS_ACCESS_SCOPE not in granted_scopes:
+			create_shopify_log(
+				status="Warning",
+				method="shopify_integration.shopify.oauth.generate_oauth_token",
+				message=_(
+					"The app does not have read_all_orders. Shopify order imports will be limited"
+					" to orders created in the last 60 days. Request this scope only if older"
+					" historical orders must be imported."
+				),
+			)
+
 		create_shopify_log(
 			status="Success",
 			method="shopify_integration.shopify.oauth.generate_oauth_token",
@@ -130,6 +143,9 @@ def generate_oauth_token(shopify_url: str, client_id: str, client_secret: str) -
 
 		return token_data
 
+	except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+		# Preserve transient failures so get_valid_access_token can retry them.
+		raise
 	except requests.exceptions.RequestException as e:
 		error_message = str(e)
 		error_code = None
@@ -149,6 +165,12 @@ def generate_oauth_token(shopify_url: str, client_id: str, client_secret: str) -
 				"{0} — The app is not installed on this shop. Install it from the Shopify Dev"
 				" Dashboard (App → Home → Install app → select this shop) and make sure the app"
 				" and the shop belong to the same Shopify organization, then save again."
+			).format(error_message)
+		elif error_code == "shop_not_permitted":
+			error_message = _(
+				"{0} — Client credentials only work when the app and shop belong to the same"
+				" Shopify organization. Create the app in the shop owner's organization, or use"
+				" an authorization flow intended for apps installed on external merchant stores."
 			).format(error_message)
 
 		# Never log the actual client_secret

@@ -24,6 +24,9 @@ REQUIRED_ACCESS_SCOPES = (
 	"write_inventory",  # inventoryActivate / inventorySetQuantities
 )
 
+# Optional Shopify approval scope needed only for imports older than 60 days.
+HISTORICAL_ORDERS_ACCESS_SCOPE = "read_all_orders"
+
 # Shopify's GraphQL webhookSubscriptionCreate mutation expects topics as
 # WebhookSubscriptionTopic enum values, unlike REST's "orders/create" style.
 WEBHOOK_EVENTS = [
