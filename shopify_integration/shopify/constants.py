@@ -8,6 +8,22 @@ OLD_SETTINGS_DOCTYPE = "Shopify Settings"
 
 API_VERSION = "2024-01"
 
+# Authentication methods (must match the Select options in Shopify Setting)
+AUTH_METHOD_STATIC = "Static Token"
+AUTH_METHOD_OAUTH = "OAuth 2.0 Client Credentials"
+
+# Admin API access scopes the connector's GraphQL operations and webhook
+# topics need. Configured on the app in the Shopify Dev Dashboard; a token
+# only carries the scopes its app version had when it was issued.
+REQUIRED_ACCESS_SCOPES = (
+	"read_orders",  # order webhook topics + historical order import
+	"read_products",  # product / variant queries
+	"write_products",  # productCreate / productUpdate / variants bulk mutations
+	"read_locations",  # locations query (Fetch Shopify Locations)
+	"read_inventory",  # inventory queries
+	"write_inventory",  # inventoryActivate / inventorySetQuantities
+)
+
 # Shopify's GraphQL webhookSubscriptionCreate mutation expects topics as
 # WebhookSubscriptionTopic enum values, unlike REST's "orders/create" style.
 WEBHOOK_EVENTS = [
