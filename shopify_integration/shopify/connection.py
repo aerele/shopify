@@ -226,10 +226,15 @@ def get_callback_url() -> str:
 
 @frappe.whitelist(allow_guest=True)
 def store_request_data() -> None:
+	"""Validate and enqueue Shopify webhooks only while the integration is enabled."""
 	if frappe.request:
+		settings = frappe.get_doc(SETTING_DOCTYPE)
+		if not settings.is_enabled():
+			return
+
 		hmac_header = frappe.get_request_header("X-Shopify-Hmac-Sha256")
 
-		_validate_request(frappe.request, hmac_header)
+		_validate_request(frappe.request, hmac_header, settings=settings)
 
 		data = json.loads(frappe.request.data)
 		event = frappe.request.headers.get("X-Shopify-Topic")
@@ -251,8 +256,9 @@ def process_request(data, event):
 	)
 
 
-def _validate_request(req, hmac_header):
-	settings = frappe.get_doc(SETTING_DOCTYPE)
+def _validate_request(req, hmac_header, settings=None):
+	"""Verify the raw webhook body with the secret for the active authentication method."""
+	settings = settings or frappe.get_doc(SETTING_DOCTYPE)
 
 	# Get the appropriate secret key based on authentication method
 	if settings.authentication_method == AUTH_METHOD_OAUTH:

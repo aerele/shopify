@@ -73,6 +73,7 @@ class ShopifySetting(SettingController):
 			self.shopify_url = self.shopify_url.replace("https://", "").replace("http://", "")
 
 		self._set_default_authentication_method()
+		self._validate_authentication_change()
 		self._validate_authentication_fields()
 		self._handle_webhooks()
 		self._validate_warehouse_links()
@@ -126,6 +127,32 @@ class ShopifySetting(SettingController):
 		"""Set default authentication method for existing documents."""
 		if not self.authentication_method:
 			self.authentication_method = AUTH_METHOD_STATIC
+
+	def _validate_authentication_change(self):
+		"""Prevent active credentials from diverging from remote webhook subscriptions.
+
+		Disabling first removes subscriptions with the old credentials. The user can
+		then save new credentials and enable the integration to register them again.
+		"""
+		previous = self.get_doc_before_save()
+		if not previous or not previous.enable_shopify:
+			return
+
+		non_password_fields = (
+			"authentication_method",
+			"shopify_url",
+			"shared_secret",
+			"client_id",
+		)
+		password_changed = any(
+			self.get(fieldname) and not self.is_dummy_password(self.get(fieldname))
+			for fieldname in ("password", "client_secret")
+		)
+		if password_changed or any(self.has_value_changed(fieldname) for fieldname in non_password_fields):
+			frappe.throw(
+				_("Disable Shopify and save before changing the shop or authentication credentials."),
+				title=_("Disable Shopify First"),
+			)
 
 	def _get_password_safe(self, fieldname: str) -> str:
 		"""
@@ -250,13 +277,26 @@ class ShopifySetting(SettingController):
 				)
 
 		elif not self.is_enabled():
-			if self.authentication_method == AUTH_METHOD_OAUTH:
-				password = self._get_password_safe("oauth_access_token")
-			else:
-				password = self._get_password_safe("password")
+			try:
+				if self.authentication_method == AUTH_METHOD_OAUTH:
+					password = self._get_or_generate_oauth_token()
+				else:
+					password = self._get_password_safe("password")
 
-			if password:
-				connection.unregister_webhooks(self.shopify_url, password)
+				if password:
+					connection.unregister_webhooks(self.shopify_url, password)
+			except Exception as e:
+				# Disabling locally must not depend on Shopify being reachable. The
+				# webhook endpoint also ignores deliveries while this setting is disabled.
+				create_shopify_log(
+					status="Warning",
+					method=(
+						"shopify_integration.shopify.doctype.shopify_setting."
+						"shopify_setting._handle_webhooks"
+					),
+					message=_("Shopify was disabled, but remote webhooks could not be removed."),
+					exception=str(e),
+				)
 
 			self.webhooks = list()  # remove all webhooks
 
