@@ -224,7 +224,8 @@ def get_callback_url() -> str:
 	return f"https://{url}/api/method/shopify_integration.shopify.connection.store_request_data"
 
 
-@frappe.whitelist(allow_guest=True)
+# Shopify cannot provide a Frappe session; the raw-body HMAC is verified before processing.
+@frappe.whitelist(allow_guest=True)  # nosemgrep: frappe-semgrep-rules.rules.security.guest-whitelisted-method
 def store_request_data() -> None:
 	"""Validate and enqueue Shopify webhooks only while the integration is enabled."""
 	if frappe.request:
