@@ -9,6 +9,7 @@ from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import frappe
+import requests
 from frappe.utils import now_datetime
 
 from shopify_integration.shopify.constants import AUTH_METHOD_OAUTH, AUTH_METHOD_STATIC, SETTING_DOCTYPE
@@ -183,6 +184,30 @@ class TestGenerateOauthToken(unittest.TestCase):
 
 	@patch("shopify_integration.shopify.oauth.create_shopify_log")
 	@patch("requests.post")
+	def test_shop_not_permitted_explains_same_organization_requirement(self, mock_post, mock_log):
+		mock_post.return_value = self._mock_response(
+			status_code=400,
+			json_data={
+				"error": "shop_not_permitted",
+				"error_description": "Client credentials cannot be performed on this shop.",
+			},
+		)
+		generate_oauth_token = self._import()
+
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			generate_oauth_token("example.myshopify.com", "client_id_1", "client_secret_1")
+
+		self.assertIn("same Shopify organization", str(ctx.exception))
+
+	@patch("requests.post", side_effect=requests.exceptions.Timeout("timed out"))
+	def test_timeout_is_preserved_for_retry(self, mock_post):
+		generate_oauth_token = self._import()
+
+		with self.assertRaises(requests.exceptions.Timeout):
+			generate_oauth_token("example.myshopify.com", "client_id_1", "client_secret_1")
+
+	@patch("shopify_integration.shopify.oauth.create_shopify_log")
+	@patch("requests.post")
 	def test_client_secret_never_logged(self, mock_post, mock_log):
 		"""Client secret must never appear in log calls."""
 		mock_post.return_value = self._mock_response()
@@ -324,6 +349,18 @@ class TestGetValidAccessToken(unittest.TestCase):
 		refresh_oauth_token(setting)
 
 		self.assertIn("oauth_access_token", setting.flags.ignore_save_passwords)
+
+	@patch("shopify_integration.shopify.oauth.time.sleep")
+	@patch("shopify_integration.shopify.oauth.refresh_oauth_token")
+	def test_transient_refresh_failure_is_retried_once(self, mock_refresh, mock_sleep):
+		from shopify_integration.shopify.oauth import get_valid_access_token
+
+		setting = self._make_setting(token=None, expires_at=None)
+		mock_refresh.side_effect = [requests.exceptions.ConnectionError("offline"), "new_token"]
+
+		self.assertEqual(get_valid_access_token(setting), "new_token")
+		self.assertEqual(mock_refresh.call_count, 2)
+		mock_sleep.assert_called_once_with(1)
 
 
 class TestInvalidateCachedToken(unittest.TestCase):
@@ -491,6 +528,31 @@ class TestValidateRequestHmac(unittest.TestCase):
 			_validate_request(req, self._make_hmac("any", b'{"id": 2}'))
 
 
+class TestStoreRequestData(unittest.TestCase):
+	@patch("shopify_integration.shopify.connection.process_request")
+	@patch("shopify_integration.shopify.connection._validate_request")
+	@patch("shopify_integration.shopify.connection.frappe.get_doc")
+	def test_disabled_integration_ignores_remote_webhooks(self, mock_get_doc, mock_validate, mock_process):
+		from shopify_integration.shopify.connection import store_request_data
+
+		setting = MagicMock()
+		setting.is_enabled.return_value = False
+		mock_get_doc.return_value = setting
+		had_request = hasattr(frappe.local, "request")
+		previous_request = getattr(frappe.local, "request", None)
+		frappe.local.request = MagicMock()
+		try:
+			store_request_data()
+		finally:
+			if had_request:
+				frappe.local.request = previous_request
+			else:
+				del frappe.local.request
+
+		mock_validate.assert_not_called()
+		mock_process.assert_not_called()
+
+
 class TestShopifySettingAuth(unittest.TestCase):
 	"""Authentication field validation and token pre-generation on the setting doc.
 
@@ -576,6 +638,36 @@ class TestShopifySettingAuth(unittest.TestCase):
 		setting._set_default_authentication_method()
 
 		self.assertEqual(setting.authentication_method, AUTH_METHOD_STATIC)
+
+	def test_authentication_change_is_blocked_while_previously_enabled(self):
+		setting = self._make_setting(authentication_method=AUTH_METHOD_OAUTH, client_id="cid")
+		setting.get_doc_before_save = lambda: frappe._dict(enable_shopify=1)
+		setting.has_value_changed = lambda fieldname: fieldname == "authentication_method"
+
+		with self.assertRaises(frappe.ValidationError):
+			setting._validate_authentication_change()
+
+	def test_authentication_change_is_allowed_after_disable(self):
+		setting = self._make_setting(authentication_method=AUTH_METHOD_OAUTH, client_id="cid")
+		setting.get_doc_before_save = lambda: frappe._dict(enable_shopify=0)
+		setting.has_value_changed = lambda fieldname: True
+
+		setting._validate_authentication_change()
+
+	def test_dummy_password_is_not_treated_as_credential_change(self):
+		setting = self._make_setting(password="********")
+		setting.get_doc_before_save = lambda: frappe._dict(enable_shopify=1)
+		setting.has_value_changed = lambda fieldname: False
+
+		setting._validate_authentication_change()
+
+	def test_new_plaintext_password_is_blocked_while_enabled(self):
+		setting = self._make_setting(password="new-token")
+		setting.get_doc_before_save = lambda: frappe._dict(enable_shopify=1)
+		setting.has_value_changed = lambda fieldname: False
+
+		with self.assertRaises(frappe.ValidationError):
+			setting._validate_authentication_change()
 
 	@patch("shopify_integration.shopify.doctype.shopify_setting.shopify_setting.create_shopify_log")
 	def test_before_save_skips_second_token_mint(self, mock_log):
@@ -700,3 +792,29 @@ class TestShopifySettingAuth(unittest.TestCase):
 			setting._handle_webhooks()
 
 		mock_invalidate.assert_not_called()
+
+	@patch("shopify_integration.shopify.doctype.shopify_setting.shopify_setting.create_shopify_log")
+	@patch("shopify_integration.shopify.connection.unregister_webhooks")
+	def test_disable_oauth_uses_a_valid_token(self, mock_unregister, mock_log):
+		setting = self._make_setting(enable_shopify=0, authentication_method=AUTH_METHOD_OAUTH)
+		setting.webhooks = [frappe._dict(webhook_id="1")]
+		setting._get_or_generate_oauth_token = MagicMock(return_value="fresh_token")
+
+		setting._handle_webhooks()
+
+		setting._get_or_generate_oauth_token.assert_called_once()
+		mock_unregister.assert_called_once_with(setting.shopify_url, "fresh_token")
+		self.assertEqual(setting.webhooks, [])
+
+	@patch("shopify_integration.shopify.doctype.shopify_setting.shopify_setting.create_shopify_log")
+	@patch("shopify_integration.shopify.connection.unregister_webhooks")
+	def test_disable_succeeds_when_remote_cleanup_fails(self, mock_unregister, mock_log):
+		setting = self._make_setting(enable_shopify=0, authentication_method=AUTH_METHOD_OAUTH)
+		setting.webhooks = [frappe._dict(webhook_id="1")]
+		setting._get_or_generate_oauth_token = MagicMock(side_effect=Exception("Shopify unavailable"))
+
+		setting._handle_webhooks()
+
+		mock_unregister.assert_not_called()
+		self.assertEqual(setting.webhooks, [])
+		mock_log.assert_called_once()
