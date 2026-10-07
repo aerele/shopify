@@ -10,7 +10,7 @@ from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import MODULE_NAME
-from shopify_integration.shopify.product import ShopifyProduct
+from shopify_integration.shopify.product import ShopifyProduct, fetch_all_variant_ids
 
 # constants
 SYNC_JOB_NAME = "shopify.job.sync.all.products"
@@ -207,33 +207,17 @@ def resync_product(product):
 	return _resync_product(product)
 
 
-_PRODUCT_VARIANTS_QUERY = """
-query product($id: ID!) {
-	product(id: $id) {
-		variants(first: 100) {
-			edges {
-				node {
-					id
-				}
-			}
-		}
-	}
-}
-"""
-
-
 @temp_shopify_session
 def _resync_product(product):
 	savepoint = "shopify_resync_product"
 	try:
-		response = json.loads(
-			GraphQL().execute(_PRODUCT_VARIANTS_QUERY, {"id": f"gid://shopify/Product/{product}"})
-		)
-		item = response.get("data", {}).get("product") or {}
-
+		# savepoint first: a failed fetch must not rollback to a
+		# savepoint that was never created
 		frappe.db.savepoint(savepoint)
-		for edge in (item.get("variants") or {}).get("edges", []):
-			variant_id = _gid_to_id((edge.get("node") or {}).get("id"))
+
+		# visit every variant (all pages): the first unsynced variant
+		# re-fetches the product and creates all missing variants
+		for variant_id in fetch_all_variant_ids(product):
 			shopify_product = ShopifyProduct(product, variant_id=variant_id)
 			shopify_product.sync_product()
 
