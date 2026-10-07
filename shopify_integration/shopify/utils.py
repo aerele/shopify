@@ -2,9 +2,7 @@
 # For license information, please see LICENSE
 
 import frappe
-from ecommerce_core.ecommerce_core.doctype.ecommerce_integration_log.ecommerce_integration_log import (
-	create_log,
-)
+from ecommerce_core.utils.integration_log import create_integration_log
 from frappe import _, _dict
 
 from shopify_integration.shopify.constants import (
@@ -15,7 +13,7 @@ from shopify_integration.shopify.constants import (
 
 
 def create_shopify_log(**kwargs):
-	return create_log(module_def=MODULE_NAME, **kwargs)
+	return create_integration_log(MODULE_NAME, **kwargs)
 
 
 def migrate_from_old_connector(payload=None, request_id=None):
