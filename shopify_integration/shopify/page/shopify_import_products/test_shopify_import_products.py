@@ -9,6 +9,7 @@ from shopify_integration.shopify.product import ShopifyProduct
 from ...tests.utils import TestCase
 from .shopify_import_products import (
 	_build_product_search_query,
+	_resync_product,
 	get_shopify_products,
 	queue_sync_all_products,
 )
@@ -234,3 +235,49 @@ class TestShopifyImportProducts(TestCase):
 			get_shopify_products(limit=999)
 
 		self.assertEqual(captured["first"], 20)
+
+	def test_resync_visits_variants_beyond_first_page(self):
+		"""Resync walks every variants page, so a product imported with only its
+		first page's variants gets its missing variants visited (the first
+		unsynced one re-fetches the whole product and creates them)."""
+		visited = []
+
+		class Recorder:
+			def __init__(self, product_id, variant_id=None):
+				visited.append(variant_id)
+
+			def sync_product(self):
+				pass
+
+		def fake_execute(graphql_self, query, variables=None, operation_name=None):
+			cursor = variables.get("variantsCursor")
+			if cursor is None:
+				ids, next_cursor = range(250), "page-1"
+			elif cursor == "page-1":
+				ids, next_cursor = range(250, 260), None
+			else:
+				raise AssertionError(f"unexpected variants cursor: {cursor}")
+
+			return json.dumps(
+				{
+					"data": {
+						"product": {
+							"variants": {
+								"edges": [{"node": {"id": f"gid://shopify/ProductVariant/{i}"}} for i in ids],
+								"pageInfo": {"hasNextPage": bool(next_cursor), "endCursor": next_cursor},
+							}
+						}
+					}
+				}
+			)
+
+		with (
+			patch("shopify.resources.graphql.GraphQL.execute", fake_execute),
+			patch(
+				"shopify_integration.shopify.page.shopify_import_products.shopify_import_products.ShopifyProduct",
+				Recorder,
+			),
+		):
+			self.assertTrue(_resync_product("123"))
+
+		self.assertEqual(visited, [str(i) for i in range(260)])
