@@ -10,6 +10,17 @@ app_license = "GNU GPL v3.0"
 
 required_apps = ["ecommerce_core"]
 
+# Shared Product Sync page (ecommerce_core)
+# "integration" is the Ecommerce Item.integration value (MODULE_NAME) and matches the Module Def.
+ecommerce_product_sync_providers = [
+	{
+		"integration": "shopify",
+		"label": "Shopify",
+		"settings_doctype": "Shopify Setting",
+		"adapter": "shopify_integration.product_sync.ShopifyProductSyncAdapter",
+	}
+]
+
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
 # 	{
