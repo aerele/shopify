@@ -5,6 +5,19 @@ app_description = "Shopify ERPNext Integration"
 app_email = "integrations-support@aerele.in"
 app_license = "GNU GPL v3.0"
 
+app_logo_url = "/assets/shopify_integration/images/shopify.svg"
+app_home = "/desk/shopify"
+
+add_to_apps_screen = [
+	{
+		"name": app_name,
+		"logo": app_logo_url,
+		"title": app_title,
+		"route": app_home,
+		"has_permission": "shopify_integration.check_app_permission",
+	}
+]
+
 # Apps
 # ------------------
 

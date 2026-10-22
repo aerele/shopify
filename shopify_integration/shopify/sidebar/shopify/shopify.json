@@ -1,0 +1,107 @@
+{
+ "app": "shopify_integration",
+ "creation": "2026-10-21 00:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Sidebar",
+ "header_icon": "shopping-cart",
+ "idx": 0,
+ "items": [
+  {
+   "doctype": "Sidebar Item",
+   "icon": "home",
+   "idx": 1,
+   "label": "Home",
+   "link_to": "Shopify",
+   "link_type": "Workspace",
+   "parentfield": "items",
+   "parenttype": "Sidebar",
+   "type": "Link"
+  },
+  {
+   "doctype": "Sidebar Item",
+   "icon": "settings",
+   "idx": 2,
+   "indent": 1,
+   "keep_closed": 1,
+   "label": "Settings",
+   "parentfield": "items",
+   "parenttype": "Sidebar",
+   "type": "Section Break"
+  },
+  {
+   "child": 1,
+   "doctype": "Sidebar Item",
+   "idx": 3,
+   "is_default_module": 1,
+   "label": "Shopify Setting",
+   "link_to": "Shopify Setting",
+   "link_type": "DocType",
+   "parentfield": "items",
+   "parenttype": "Sidebar",
+   "type": "Link"
+  },
+  {
+   "doctype": "Sidebar Item",
+   "icon": "package",
+   "idx": 4,
+   "indent": 1,
+   "keep_closed": 1,
+   "label": "Operations",
+   "parentfield": "items",
+   "parenttype": "Sidebar",
+   "type": "Section Break"
+  },
+  {
+   "child": 1,
+   "doctype": "Sidebar Item",
+   "idx": 5,
+   "is_default_module": 1,
+   "label": "Import Products",
+   "link_to": "shopify-import-products",
+   "link_type": "Page",
+   "parentfield": "items",
+   "parenttype": "Sidebar",
+   "type": "Link"
+  },
+  {
+   "doctype": "Sidebar Item",
+   "icon": "list",
+   "idx": 6,
+   "indent": 1,
+   "keep_closed": 1,
+   "label": "Masters & Logs",
+   "parentfield": "items",
+   "parenttype": "Sidebar",
+   "type": "Section Break"
+  },
+  {
+   "child": 1,
+   "doctype": "Sidebar Item",
+   "idx": 7,
+   "label": "Ecommerce Item",
+   "link_to": "Ecommerce Item",
+   "link_type": "DocType",
+   "parentfield": "items",
+   "parenttype": "Sidebar",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "doctype": "Sidebar Item",
+   "idx": 8,
+   "label": "Integration Log",
+   "link_to": "Ecommerce Integration Log",
+   "link_type": "DocType",
+   "parentfield": "items",
+   "parenttype": "Sidebar",
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-10-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Shopify",
+ "name": "Shopify",
+ "owner": "Administrator",
+ "standard": 1,
+ "title": "Shopify"
+}
