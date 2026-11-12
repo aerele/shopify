@@ -37,12 +37,21 @@ WEBHOOK_EVENTS = [
 	"ORDERS_PARTIALLY_FULFILLED",
 ]
 
+METAFIELD_REFRESH_TOPICS = {
+	"Order": "ORDERS_UPDATED",
+	"Product": "PRODUCTS_UPDATE",
+	"Customer": "CUSTOMERS_UPDATE",
+}
+
 EVENT_MAPPER = {
 	"orders/create": "shopify_integration.shopify.order.sync_sales_order",
 	"orders/paid": "shopify_integration.shopify.invoice.prepare_sales_invoice",
 	"orders/fulfilled": "shopify_integration.shopify.fulfillment.prepare_delivery_note",
 	"orders/cancelled": "shopify_integration.shopify.order.cancel_order",
 	"orders/partially_fulfilled": "shopify_integration.shopify.fulfillment.prepare_delivery_note",
+	"orders/updated": "shopify_integration.shopify.metafields.handle_order_updated",
+	"products/update": "shopify_integration.shopify.metafields.handle_product_updated",
+	"customers/update": "shopify_integration.shopify.metafields.handle_customer_updated",
 }
 
 SHOPIFY_VARIANTS_ATTR_LIST = ["option1", "option2", "option3"]

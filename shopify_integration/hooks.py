@@ -156,6 +156,7 @@ scheduler_events = {
 	"all": ["shopify_integration.shopify.inventory.update_inventory_on_shopify"],
 	"hourly": [
 		"shopify_integration.shopify.order.sync_old_orders",
+		"shopify_integration.shopify.metafields.refresh_recent_order_metafields",
 	],
 }
 
