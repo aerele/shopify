@@ -10,6 +10,7 @@ from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import MODULE_NAME
+from shopify_integration.shopify.metafields import sync_product_metafields
 from shopify_integration.shopify.product import ShopifyProduct
 
 # constants
@@ -236,6 +237,10 @@ def _resync_product(product):
 			variant_id = _gid_to_id((edge.get("node") or {}).get("id"))
 			shopify_product = ShopifyProduct(product, variant_id=variant_id)
 			shopify_product.sync_product()
+
+		# the loop above skips already-linked variants - still refresh any
+		# mapped metafield values on the existing items
+		sync_product_metafields(product)
 
 		return True
 	except Exception:

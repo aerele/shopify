@@ -16,6 +16,7 @@ from shopify_integration.shopify.constants import (
 	SUPPLIER_ID_FIELD,
 	WEIGHT_TO_ERPNEXT_UOM_MAP,
 )
+from shopify_integration.shopify.metafields import apply_metafields, sync_product_metafields
 from shopify_integration.shopify.utils import create_shopify_log
 
 
@@ -58,6 +59,10 @@ class ShopifyProduct:
 		if not self.is_synced():
 			product_dict = _fetch_shopify_product(self.product_id)
 			self._make_item(product_dict)
+		elif not self.variant_id:
+			# already linked (e.g. imported before a metafield mapping existed):
+			# refresh the mapped metafield values instead of skipping silently
+			sync_product_metafields(self.product_id)
 
 	def _make_item(self, product_dict):
 		_add_weight_details(product_dict)
@@ -138,6 +143,10 @@ class ShopifyProduct:
 			"default_supplier": self._get_supplier(product_dict),
 		}
 
+		# product-level metafields (Shopify's extra custom data) land on every
+		# item created from this product - the template and its variants
+		apply_metafields(item_dict, "Product", product_dict.get("metafields"))
+
 		integration_item_code = product_dict["id"]  # shopify product_id
 		variant_id = product_dict.get("variant_id", "")  # shopify variant_id if has variants
 		sku = item_dict["sku"]
@@ -173,6 +182,7 @@ class ShopifyProduct:
 					"item_price": variant.get("price"),
 					"weight_unit": variant.get("weight_unit"),
 					"weight": variant.get("weight"),
+					"metafields": product_dict.get("metafields"),
 				}
 
 				for i, variant_attr in enumerate(SHOPIFY_VARIANTS_ATTR_LIST):
@@ -261,6 +271,14 @@ query product($id: ID!) {
 			name
 			values
 		}
+		metafields(first: 50) {
+			nodes {
+				namespace
+				key
+				value
+				type
+			}
+		}
 		variants(first: 100) {
 			edges {
 				node {
@@ -343,6 +361,18 @@ def _normalize_gql_product(node) -> dict:
 
 	image = node.get("featuredImage") or {}
 
+	metafields = [
+		# type is needed to detect metaobject references, which are resolved
+		# to display names instead of stored as raw GIDs
+		{
+			"namespace": mf.get("namespace"),
+			"key": mf.get("key"),
+			"value": mf.get("value"),
+			"type": mf.get("type"),
+		}
+		for mf in (node.get("metafields") or {}).get("nodes") or []
+	]
+
 	return {
 		"id": _gid_to_id(node.get("id")),
 		"title": node.get("title"),
@@ -352,6 +382,7 @@ def _normalize_gql_product(node) -> dict:
 		"image": {"src": image.get("url")} if image.get("url") else None,
 		"options": node.get("options") or [],
 		"variants": variants,
+		"metafields": metafields,
 	}
 
 

@@ -11,6 +11,7 @@ from shopify_integration.shopify.constants import (
 	MODULE_NAME,
 	SETTING_DOCTYPE,
 )
+from shopify_integration.shopify.metafields import sync_metafields_to_doc
 
 
 class ShopifyCustomer(EcommerceCustomer):
@@ -27,6 +28,10 @@ class ShopifyCustomer(EcommerceCustomer):
 
 		customer_group = self.setting.customer_group
 		super().sync_customer(customer_name, customer_group)
+
+		# customer data arrives via order webhooks, which carry no metafields -
+		# fetch the mapped ones separately (Customer name == shopify customer id)
+		sync_metafields_to_doc("Customer", cstr(self.customer_id), "Customer", self.customer_id)
 
 		billing_address = customer.get("billing_address", {}) or customer.get("default_address")
 		shipping_address = customer.get("shipping_address", {})
