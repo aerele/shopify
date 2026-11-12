@@ -10,6 +10,17 @@ app_license = "GNU GPL v3.0"
 
 required_apps = ["ecommerce_core"]
 
+# Ecommerce Core dashboard
+# ------------------------
+ecommerce_dashboard_providers = [
+	{
+		"integration": "shopify",  # Module Def / Ecommerce Item.integration value
+		"label": "Shopify",
+		"settings_doctype": "Shopify Setting",
+		"adapter": "shopify_integration.shopify.dashboard.ShopifyDashboardAdapter",
+	}
+]
+
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
 # 	{
