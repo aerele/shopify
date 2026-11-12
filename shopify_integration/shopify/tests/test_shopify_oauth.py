@@ -12,7 +12,12 @@ import frappe
 import requests
 from frappe.utils import now_datetime
 
-from shopify_integration.shopify.constants import AUTH_METHOD_OAUTH, AUTH_METHOD_STATIC, SETTING_DOCTYPE
+from shopify_integration.shopify.constants import (
+	AUTH_METHOD_OAUTH,
+	AUTH_METHOD_STATIC,
+	SETTING_DOCTYPE,
+	WEBHOOK_EVENTS,
+)
 from shopify_integration.shopify.doctype.shopify_setting.shopify_setting import ShopifySetting
 
 
@@ -775,22 +780,13 @@ class TestShopifySettingAuth(unittest.TestCase):
 		setting._get_or_generate_oauth_token = lambda: "good_token"
 		mock_register.return_value = [
 			{"id": f"gid://shopify/WebhookSubscription/{i}", "topic": t}
-			for i, t in enumerate(
-				[
-					"ORDERS_CREATE",
-					"ORDERS_PAID",
-					"ORDERS_FULFILLED",
-					"ORDERS_CANCELLED",
-					"ORDERS_PARTIALLY_FULFILLED",
-				],
-				1,
-			)
+			for i, t in enumerate(WEBHOOK_EVENTS, 1)
 		]
 
 		setting._handle_webhooks()
 
 		mock_invalidate.assert_not_called()
-		self.assertEqual(len(setting.webhooks), 5)
+		self.assertEqual(len(setting.webhooks), len(WEBHOOK_EVENTS))
 
 	@patch("shopify_integration.shopify.doctype.shopify_setting.shopify_setting.create_shopify_log")
 	@patch("shopify_integration.shopify.connection.register_webhooks")
@@ -804,6 +800,22 @@ class TestShopifySettingAuth(unittest.TestCase):
 			setting._handle_webhooks()
 
 		mock_invalidate.assert_not_called()
+
+	def test_metafield_refresh_topics_follow_mappings(self):
+		"""Update topics are registered per resource that has mappings, deduplicated."""
+		from shopify_integration.shopify.constants import METAFIELD_REFRESH_TOPICS
+
+		setting = self._make_setting()
+		setting.metafield_mapping = [
+			frappe._dict(shopify_resource="Order"),
+			frappe._dict(shopify_resource="Order"),
+			frappe._dict(shopify_resource="Product"),
+		]
+
+		self.assertEqual(
+			sorted(setting._metafield_refresh_topics()),
+			sorted([METAFIELD_REFRESH_TOPICS["Order"], METAFIELD_REFRESH_TOPICS["Product"]]),
+		)
 
 	@patch("shopify_integration.shopify.doctype.shopify_setting.shopify_setting.create_shopify_log")
 	@patch("shopify_integration.shopify.connection.unregister_webhooks")

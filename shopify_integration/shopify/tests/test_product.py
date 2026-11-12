@@ -1,14 +1,71 @@
 # Copyright (c) 2021, Frappe and Contributors
 # See LICENSE
 
+from typing import ClassVar
+from unittest.mock import patch
+
 import frappe
 
+from shopify_integration.shopify.constants import SETTING_DOCTYPE
 from shopify_integration.shopify.product import ShopifyProduct
 
 from .utils import TestCase
 
 
 class TestProduct(TestCase):
+	# fabric's custom field is pre-created here rather than during a test:
+	# create_custom_fields issues DDL mid-test, which implicitly commits the
+	# test transaction and leaks rows into later tests
+	FABRIC_MAPPING: ClassVar[dict] = {
+		"shopify_resource": "Product",
+		"namespace": "custom",
+		"key": "fabric",
+		"erpnext_fieldname": "custom_shopify_fabric",
+	}
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		from shopify_integration.shopify import metafields
+
+		metafields.ensure_metafield_custom_fields([frappe._dict(**cls.FABRIC_MAPPING)])
+
+	def _add_fabric_mapping(self):
+		setting = frappe.get_doc(SETTING_DOCTYPE)
+		setting.metafield_mapping = []
+		setting.append("metafield_mapping", dict(self.FABRIC_MAPPING))
+		self._save_setting(setting)
+		# this TestCase has no per-test rollback - restore the shared state
+		self.addCleanup(self._clear_state)
+
+	def _clear_state(self):
+		"""Remove this test's Item / Ecommerce Item / mapping rows so later
+		tests in the class (e.g. test_sync_single_product, which must create
+		the product itself) start from a clean slate."""
+		for name in frappe.get_all(
+			"Ecommerce Item", filters={"integration_item_code": "6732194021530"}, pluck="name"
+		):
+			frappe.delete_doc("Ecommerce Item", name, force=True, ignore_permissions=True)
+		if frappe.db.exists("Item", "6732194021530"):
+			frappe.delete_doc("Item", "6732194021530", force=True, ignore_permissions=True)
+		setting = frappe.get_doc(SETTING_DOCTYPE)
+		setting.metafield_mapping = []
+		self._save_setting(setting)
+
+	@staticmethod
+	def _save_setting(setting):
+		# custom field is pre-created in setUpClass; creating it again
+		# mid-test would issue DDL, implicitly commit the test transaction
+		# and leak rows into later tests
+		with (
+			patch(
+				"shopify_integration.shopify.doctype.shopify_setting.shopify_setting."
+				"ShopifySetting._handle_webhooks"
+			),
+			patch("shopify_integration.shopify.metafields.ensure_metafield_custom_fields"),
+		):
+			setting.save(ignore_permissions=True)
+
 	def test_sync_single_product(self):
 		self.fake_graphql("single_product_gql")
 
@@ -24,6 +81,39 @@ class TestProduct(TestCase):
 
 		ecommerce_item_exists = frappe.db.exists("Ecommerce Item", {"erpnext_item_code": item.name})
 		self.assertTrue(bool(ecommerce_item_exists))
+
+	def test_sync_product_with_metafields(self):
+		self._add_fabric_mapping()
+
+		self.fake_graphql("single_product_gql")
+
+		product = ShopifyProduct(product_id="6732194021530", variant_id="39933951901850")
+		product.sync_product()
+
+		item = product.get_erpnext_item()
+		self.assertEqual(frappe.db.get_value("Item", item.name, "custom_shopify_fabric"), "100% Cotton")
+
+	def test_resync_product_refreshes_metafields(self):
+		"""Items imported before a mapping existed never got the value; syncing
+		a linked product again must refresh it instead of skipping."""
+		self._add_fabric_mapping()
+
+		self.fake_graphql("single_product_gql")
+		product = ShopifyProduct(product_id="6732194021530", variant_id="39933951901850")
+		product.sync_product()
+
+		item = product.get_erpnext_item()
+		self.assertEqual(frappe.db.get_value("Item", item.name, "custom_shopify_fabric"), "100% Cotton")
+
+		# simulate the item having been synced before the mapping existed
+		frappe.db.set_value("Item", item.name, "custom_shopify_fabric", "")
+
+		# re-syncing the already-linked product refreshes the value
+		self.fake_graphql("single_product_gql")
+		resync = ShopifyProduct(product_id="6732194021530")
+		resync.sync_product()
+
+		self.assertEqual(frappe.db.get_value("Item", item.name, "custom_shopify_fabric"), "100% Cotton")
 
 	def test_sync_product_with_variants(self):
 		self.fake_graphql("variant_product_gql")
