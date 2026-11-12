@@ -1,8 +1,6 @@
 // Copyright (c) 2021, Frappe and contributors
 // For license information, please see LICENSE
 
-frappe.provide("shopify_integration.shopify.shopify_setting");
-
 frappe.ui.form.on("Shopify Setting", {
 	onload: function (frm) {
 		frappe.call({
@@ -34,6 +32,17 @@ frappe.ui.form.on("Shopify Setting", {
 				integration: "Shopify",
 			});
 		});
+		if (frm.doc.enable_shopify) {
+			frm.add_custom_button(__("Fetch Shopify Metafields"), () => {
+				frappe.call({
+					method: "shopify_integration.shopify.metafields.fetch_shopify_metafield_definitions",
+					type: "GET",
+					callback: (r) => {
+						if (!r.exc) show_metafield_picker(frm, r.message || {});
+					},
+				});
+			});
+		}
 		frm.trigger("setup_queries");
 	},
 
@@ -93,3 +102,94 @@ frappe.ui.form.on("Shopify Setting", {
 		frm.set_query("default_shipping_charges_account", tax_query);
 	},
 });
+
+function show_metafield_picker(frm, definitions) {
+	const mapped = new Set(
+		(frm.doc.metafield_mapping || []).map((d) =>
+			[d.shopify_resource, d.namespace, d.key].join("::")
+		)
+	);
+
+	const rows = [];
+	$.each(definitions, (resource, defs) => {
+		$.each(defs, (_i, d) => {
+			rows.push({
+				resource: resource,
+				namespace: d.namespace,
+				key: d.key,
+				name: d.name,
+				type: d.type,
+				suggested_fieldname: d.suggested_fieldname,
+				is_mapped: mapped.has([resource, d.namespace, d.key].join("::")),
+			});
+		});
+	});
+
+	if (!rows.length) {
+		frappe.msgprint(__("No metafield definitions found on the Shopify store."));
+		return;
+	}
+
+	const dialog = new frappe.ui.Dialog({
+		title: __("Choose Shopify Metafields to Map"),
+		size: "extra-large",
+		fields: [{ fieldtype: "HTML", fieldname: "definitions_html" }],
+		primary_action_label: __("Add Mappings"),
+		primary_action: () => {
+			const checked = dialog.$wrapper.find("input.metafield-check:checked");
+			checked.each(function () {
+				const d = JSON.parse(decodeURIComponent(this.dataset.definition));
+				frm.add_child("metafield_mapping", {
+					shopify_resource: d.resource,
+					namespace: d.namespace,
+					key: d.key,
+					erpnext_fieldname: d.suggested_fieldname,
+				});
+			});
+			if (checked.length) {
+				frm.refresh_field("metafield_mapping");
+				frappe.show_alert({
+					message: __("{0} mapping row(s) added - adjust the fieldnames and save", [
+						checked.length,
+					]),
+					indicator: "green",
+				});
+			}
+			dialog.hide();
+		},
+	});
+
+	const row_html = (d) => `
+		<tr>
+			<td style="width: 30px">
+				<input type="checkbox" class="metafield-check"
+					data-definition="${encodeURIComponent(JSON.stringify(d))}" ${d.is_mapped ? "disabled" : ""}>
+			</td>
+			<td>${frappe.utils.escape_html(d.resource || "")}</td>
+			<td>${frappe.utils.escape_html(d.namespace || "")}</td>
+			<td>${frappe.utils.escape_html(d.key || "")}</td>
+			<td>${frappe.utils.escape_html(d.name || "")}</td>
+			<td>${frappe.utils.escape_html(d.type || "")}</td>
+			<td>${d.is_mapped ? __("Already mapped") : ""}</td>
+		</tr>`;
+
+	dialog.fields_dict.definitions_html.$wrapper.html(`
+		<div style="max-height: 420px; overflow: auto;">
+			<table class="table table-bordered">
+				<thead>
+					<tr>
+						<th></th>
+						<th>${__("Resource")}</th>
+						<th>${__("Namespace")}</th>
+						<th>${__("Key")}</th>
+						<th>${__("Name")}</th>
+						<th>${__("Type")}</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>${rows.map(row_html).join("")}</tbody>
+			</table>
+		</div>
+	`);
+	dialog.show();
+}
