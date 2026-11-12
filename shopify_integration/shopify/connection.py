@@ -132,11 +132,7 @@ mutation webhookSubscriptionDelete($id: ID!) {
 
 
 def register_webhooks(shopify_url: str, password: str, extra_topics: list[str] | None = None) -> list[dict]:
-	"""Register required webhooks with shopify and return registered webhooks.
-
-	`extra_topics` carries the optional metafield refresh topics (see
-	METAFIELD_REFRESH_TOPICS) for resources with metafield mappings.
-	"""
+	"""Register required webhooks with shopify and return registered webhooks."""
 	new_webhooks = []
 
 	# clear all stale webhooks matching current site url before registering new ones

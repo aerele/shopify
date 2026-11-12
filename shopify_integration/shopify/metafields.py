@@ -17,16 +17,12 @@ from shopify_integration.shopify.constants import (
 )
 from shopify_integration.shopify.utils import create_shopify_log
 
-# Mapping row "Shopify Resource" value -> ERPNext doctype the value is written to
 RESOURCE_TO_DOCTYPE = {
 	"Product": "Item",
 	"Order": "Sales Order",
 	"Customer": "Customer",
 }
 
-# All metafield fields live together in one section on the target doctype.
-# Without an explicit position, Frappe appends the field to the end of the
-# form, which on tabbed forms like Item spawns a stray duplicate tab.
 _METAFIELD_SECTION = {
 	"fieldname": "shopify_metafields_section",
 	"label": "Shopify Metafields",
@@ -34,16 +30,12 @@ _METAFIELD_SECTION = {
 	"collapsible": 1,
 }
 
-# The section is anchored right after the connector's own custom fields when
-# they exist (integration enabled), else after the core field those use.
 _SECTION_ANCHORS = {
 	"Item": (ITEM_SELLING_RATE_FIELD, "standard_rate"),
 	"Sales Order": (ORDER_STATUS_FIELD, "title"),
 	"Customer": (CUSTOMER_ID_FIELD, "series"),
 }
 
-# Resources whose metafields are fetched with a standalone query. Product
-# metafields ride along in the product query instead (see product._PRODUCT_QUERY).
 _FETCHABLE_RESOURCES = {
 	"Order": "order",
 	"Customer": "customer",
@@ -64,8 +56,6 @@ query metafields($id: ID!) {
 }
 """
 
-# Shopify resources -> GraphQL MetafieldOwnerType values for the
-# metafieldDefinitions query
 _METAFIELD_OWNER_TYPES = {
 	"Product": "PRODUCT",
 	"Order": "ORDER",
@@ -93,8 +83,7 @@ query metafieldDefinitions($ownerType: MetafieldOwnerType!, $first: Int!, $after
 
 
 def _suggest_fieldname(key: str) -> str:
-	"""Turn a Shopify metafield key into a valid ERPNext fieldname suggestion
-	(the mapping validation only allows letters, digits and underscores)."""
+	"""Suggest a valid ERPNext fieldname for a metafield key."""
 	suggested = re.sub(r"[^a-zA-Z0-9_]", "_", key or "")
 	if not suggested or not suggested[0].isalpha():
 		suggested = f"shopify_{suggested}" if suggested else "shopify_field"
@@ -104,14 +93,7 @@ def _suggest_fieldname(key: str) -> str:
 @frappe.whitelist(methods=["GET"])
 @temp_shopify_session
 def fetch_shopify_metafield_definitions() -> dict[str, list[dict]]:
-	"""Return the store's metafield definitions per mapped resource.
-
-	Definitions (Settings -> Custom data in the Shopify admin) describe every
-	metafield the store can use, including ones with no value set yet -
-	unlike querying metafield values, which only shows what is filled in.
-	Used by the Shopify Setting form so mappings can be chosen from the
-	store instead of typed in by hand.
-	"""
+	"""Return the store's metafield definitions per resource, for the setting form's picker."""
 	frappe.has_permission(SETTING_DOCTYPE, "read", throw=True)
 
 	definitions = {}
@@ -153,10 +135,7 @@ def fetch_shopify_metafield_definitions() -> dict[str, list[dict]]:
 
 
 def get_metafield_mappings(resource: str) -> list[dict]:
-	"""Return the configured mapping rows for a Shopify resource.
-
-	Each row: {"namespace": ..., "key": ..., "erpnext_fieldname": ...}
-	"""
+	"""Return the mapping rows for a Shopify resource."""
 	setting = frappe.get_cached_doc(SETTING_DOCTYPE)
 	return [
 		{"namespace": d.namespace, "key": d.key, "erpnext_fieldname": d.erpnext_fieldname}
@@ -165,17 +144,10 @@ def get_metafield_mappings(resource: str) -> list[dict]:
 	]
 
 
-# metafield "type" values whose value is a metaobject reference - a single GID
-# or a JSON-encoded list of them - instead of plain data
 _METAOBJECT_REFERENCE_TYPES = {"metaobject_reference", "list.metaobject_reference"}
 
-# fieldtypes an existing custom field may have to receive metafield values
-# (they are stored as text); anything else (Int, Date, Link...) would corrupt
-# or truncate the value
 TEXT_FIELD_TYPES = ("Data", "Small Text", "Text", "Long Text")
 
-# update-webhook resources that map to one ERPNext document found by id field;
-# Product is handled separately (one product maps to many Items)
 _UPDATED_RESOURCE_DOCTYPES = {
 	"Order": ("Sales Order", ORDER_ID_FIELD),
 	"Customer": ("Customer", CUSTOMER_ID_FIELD),
@@ -192,11 +164,7 @@ query metaobject($id: ID!) {
 
 @temp_shopify_session
 def _fetch_metaobject_display_name(gid: str) -> str | None:
-	"""Fetch one metaobject entry's display name (e.g. "Red") by GID.
-
-	Returns None on failure so callers can keep the raw reference value; the
-	log says to add the read_metaobjects scope if access is the problem.
-	"""
+	"""Fetch a metaobject entry's display name by GID, or None on failure."""
 	response = json.loads(GraphQL().execute(_METAOBJECT_QUERY, {"id": gid}))
 
 	metaobject = (response.get("data") or {}).get("metaobject")
@@ -220,9 +188,7 @@ def _fetch_metaobject_display_name(gid: str) -> str | None:
 
 
 def _resolve_metaobject_value(metafield: dict) -> str | None:
-	"""Replace a metaobject-reference value with the referenced entries'
-	display names: "Red" for a single reference, "Red, Blue" for a list.
-	Falls back to the raw reference when an entry can't be resolved."""
+	"""Resolve a metaobject reference to its display name(s), e.g. "Red" or "Red, Blue"."""
 	if metafield.get("type") == "metaobject_reference":
 		return _fetch_metaobject_display_name(metafield.get("value")) or metafield.get("value")
 
@@ -239,11 +205,7 @@ def _resolve_metaobject_value(metafield: dict) -> str | None:
 def _mapped_field_values(
 	resource: str, metafields: list[dict] | None, mappings: list[dict] | None = None
 ) -> dict[str, str]:
-	"""Resolve a resource's metafields against its mapping rows into
-	{erpnext_fieldname: value}. Only mapped metafields are included, so
-	metaobject references (which cost one extra API call each) are only
-	resolved when a mapping actually uses them. Pass `mappings` when calling
-	in a loop to avoid reloading the setting per document."""
+	"""Match metafields against mapping rows into {erpnext_fieldname: value}."""
 	mappings = mappings if mappings is not None else get_metafield_mappings(resource)
 	if not mappings or not metafields:
 		return {}
@@ -266,14 +228,7 @@ def _mapped_field_values(
 
 
 def apply_metafields(target, resource: str, metafields: list[dict] | None) -> list[str]:
-	"""Set mapped metafield values on an ERPNext document (or a dict of its fields).
-
-	`target` may be a frappe Document or a plain dict (e.g. the item dict
-	before create_ecommerce_item() inserts it). Values are stored as text;
-	only mappings whose metafield exists on the resource are applied.
-
-	Returns the fieldnames that were set.
-	"""
+	"""Set mapped metafield values on a document or dict. Returns the fieldnames set."""
 	field_values = _mapped_field_values(resource, metafields)
 	if not field_values:
 		return []
@@ -288,15 +243,12 @@ def apply_metafields(target, resource: str, metafields: list[dict] | None) -> li
 
 
 def _changed_fields(current: dict | None, field_values: dict) -> dict:
-	"""Return only the field_values entries that differ from `current`, so
-	recurring refreshes (webhook redeliveries, the hourly job) don't rewrite
-	- and re-timestamp - every document on every run."""
 	return {f: v for f, v in field_values.items() if (current or {}).get(f) != v}
 
 
 @temp_shopify_session
 def fetch_metafields(resource: str, resource_id) -> list[dict]:
-	"""Fetch a Shopify order's/customer's metafields via GraphQL."""
+	"""Fetch a resource's metafields from Shopify."""
 	graphql_name = _FETCHABLE_RESOURCES.get(resource)
 	if not graphql_name:
 		return []
@@ -320,13 +272,7 @@ def fetch_metafields(resource: str, resource_id) -> list[dict]:
 
 @temp_shopify_session
 def sync_product_metafields(product_id, mappings: list[dict] | None = None) -> list[str]:
-	"""Refresh mapped product metafields onto already-synced Items.
-
-	Items imported before a metafield mapping was added never received its
-	value, and importing again skips linked products - this backfills the
-	mapped values onto every Item linked to the product (template and
-	variants) without recreating anything. Returns the updated item codes.
-	"""
+	"""Refresh mapped metafields onto every Item linked to a product."""
 	mappings = mappings if mappings is not None else get_metafield_mappings("Product")
 	if not mappings:
 		return []
@@ -363,17 +309,7 @@ def sync_product_metafields(product_id, mappings: list[dict] | None = None) -> l
 
 @frappe.whitelist(methods=["POST"])
 def sync_order_metafields(shopify_order_id: str) -> str:
-	"""Refresh mapped metafields onto an existing Sales Order.
-
-	Order metafields are often filled in Shopify only after the order was
-	created, so the one-shot fetch at Sales Order creation may have found
-	nothing. This re-fetches and re-stamps the mapped values.
-
-	Can be run for a single order (`bench execute
-	shopify_integration.shopify.metafields.sync_order_metafields
-	--kwargs "{'shopify_order_id': '...'}"`) or from a client script.
-	Returns the Sales Order name.
-	"""
+	"""Refresh mapped metafields onto an existing Sales Order. Returns its name."""
 	frappe.has_permission("Sales Order", "write", throw=True)
 
 	so_name = frappe.db.get_value("Sales Order", {ORDER_ID_FIELD: cstr(shopify_order_id)})
@@ -385,36 +321,22 @@ def sync_order_metafields(shopify_order_id: str) -> str:
 
 
 def handle_order_updated(payload, request_id=None):
-	"""Webhook handler for orders/updated: refresh mapped order metafields.
-
-	Order metafields are often filled in Shopify only after the order was
-	created, and the one-shot fetch at Sales Order creation may have found
-	nothing. Shopify has no value-level metafields webhook, so this rides the
-	order's own update event and re-queries the mapped metafields. Quietly
-	no-ops when no Order mapping is configured or the order isn't synced.
-	"""
+	"""Webhook handler for orders/updated."""
 	_handle_resource_updated("Order", payload, request_id)
 
 
 def handle_product_updated(payload, request_id=None):
-	"""Webhook handler for products/update: refresh mapped product metafields
-	onto every synced Item linked to the product (see sync_product_metafields)."""
+	"""Webhook handler for products/update."""
 	_handle_resource_updated("Product", payload, request_id)
 
 
 def handle_customer_updated(payload, request_id=None):
-	"""Webhook handler for customers/update: refresh mapped customer metafields."""
+	"""Webhook handler for customers/update."""
 	_handle_resource_updated("Customer", payload, request_id)
 
 
 def _handle_resource_updated(resource: str, payload: dict, request_id: str | None = None) -> None:
-	"""Shared body of the resource-update webhook handlers: refresh the mapped
-	metafields of the ERPNext document(s) linked to the updated resource.
-
-	Update deliveries carry no metafield values themselves, so the mapped
-	values are re-queried per delivery. Quietly no-ops when no mapping is
-	configured for the resource or nothing is synced for it.
-	"""
+	"""Refresh the metafields of the ERPNext documents linked to an updated resource."""
 	# nosemgrep: frappe-setuser
 	frappe.set_user("Administrator")
 	frappe.flags.request_id = request_id
@@ -435,14 +357,7 @@ def _handle_resource_updated(resource: str, payload: dict, request_id: str | Non
 
 
 def refresh_recent_order_metafields(days: int = 7) -> None:
-	"""Scheduled safety net: re-query mapped order metafields for Sales Orders
-	synced in the last `days` days.
-
-	Webhook deliveries can be missed (endpoint downtime, tunnel changes), and
-	orders synced before a metafield mapping was added never received their
-	values - this backfills both. Costs one metafields query per recent order,
-	so the window stays small.
-	"""
+	"""Re-query mapped order metafields for Sales Orders from the last `days` days."""
 	if not frappe.get_cached_doc(SETTING_DOCTYPE).is_enabled():
 		return
 
@@ -465,7 +380,6 @@ def refresh_recent_order_metafields(days: int = 7) -> None:
 				"Sales Order", order.name, "Order", order[ORDER_ID_FIELD], mappings=mappings
 			)
 		except Exception as e:
-			# one bad order must not abort the batch
 			create_shopify_log(
 				status="Error",
 				method="shopify_integration.shopify.metafields.refresh_recent_order_metafields",
@@ -477,14 +391,7 @@ def refresh_recent_order_metafields(days: int = 7) -> None:
 def sync_metafields_to_doc(
 	doctype: str, docname: str, resource: str, resource_id, mappings: list[dict] | None = None
 ) -> None:
-	"""Fetch metafields for a Shopify resource and write the mapped values
-	onto an already-inserted ERPNext document.
-
-	Used for Orders and Customers, whose webhook payloads carry no
-	metafields, and whose documents may already be submitted (Sales Order),
-	where writing via db_set is the only option. Pass `mappings` when calling
-	in a loop to avoid reloading the setting per document.
-	"""
+	"""Fetch a resource's metafields and write the mapped values onto a document."""
 	mappings = mappings if mappings is not None else get_metafield_mappings(resource)
 	if not mappings:
 		return
@@ -502,13 +409,7 @@ def sync_metafields_to_doc(
 
 
 def ensure_metafield_custom_fields(mapping_rows) -> None:
-	"""Create the ERPNext target field for each mapping row when missing, so
-	configuring a mapping is enough - no separate custom field setup.
-
-	Fields are placed inside the "Shopify Metafields" section on the target
-	doctype, anchored to a known field so they never end up appended to the
-	end of the form.
-	"""
+	"""Create the target custom field for each mapping row when missing."""
 	from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 	fieldnames_by_doctype = {}
@@ -531,19 +432,17 @@ def ensure_metafield_custom_fields(mapping_rows) -> None:
 			anchor = preferred if preferred and meta.has_field(preferred) else fallback
 			doctype_fields.append(dict(_METAFIELD_SECTION, insert_after=anchor))
 
-		# chain the fields one after another inside the section
 		prev_fieldname = _METAFIELD_SECTION["fieldname"]
 		for fieldname in fieldnames:
-			if meta.has_field(fieldname):
-				continue
-			doctype_fields.append(
-				dict(
-					fieldname=fieldname,
-					label=fieldname.replace("_", " ").title(),
-					fieldtype="Data",
-					insert_after=prev_fieldname,
+			if not meta.has_field(fieldname):
+				doctype_fields.append(
+					dict(
+						fieldname=fieldname,
+						label=fieldname.replace("_", " ").title(),
+						fieldtype="Data",
+						insert_after=prev_fieldname,
+					)
 				)
-			)
 			prev_fieldname = fieldname
 
 		if doctype_fields:

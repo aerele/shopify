@@ -238,8 +238,6 @@ def _resync_product(product):
 			shopify_product = ShopifyProduct(product, variant_id=variant_id)
 			shopify_product.sync_product()
 
-		# the loop above skips already-linked variants - still refresh any
-		# mapped metafield values on the existing items
 		sync_product_metafields(product)
 
 		return True

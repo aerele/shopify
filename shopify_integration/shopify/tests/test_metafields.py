@@ -44,6 +44,12 @@ ALL_TEST_FIELDS = [
 		erpnext_fieldname="custom_shopify_care",
 	),
 	frappe._dict(
+		shopify_resource="Product",
+		namespace="custom",
+		key="test_color_ref",
+		erpnext_fieldname="custom_shopify_color",
+	),
+	frappe._dict(
 		shopify_resource="Customer",
 		namespace="custom",
 		key="loyalty_tier",
@@ -75,6 +81,8 @@ class TestMetafields(TestCase):
 		super().setUpClass()
 		from shopify_integration.shopify import metafields
 
+		# fabric is created alone first, like an earlier save would have
+		metafields.ensure_metafield_custom_fields(ALL_TEST_FIELDS[:1])
 		metafields.ensure_metafield_custom_fields(ALL_TEST_FIELDS)
 
 	def test_mappings_are_filtered_by_resource(self):

@@ -90,8 +90,6 @@ def reconcile_existing_order(order, request_id=None):
 
 		setting = frappe.get_doc(SETTING_DOCTYPE)
 
-		# re-delivery of an order webhook is also the chance to pick up
-		# metafields that were filled in Shopify only after creation
 		sync_metafields_to_doc("Sales Order", sales_order.name, "Order", order.get("id"))
 
 		if order.get("financial_status") == "paid":
@@ -188,8 +186,6 @@ def create_sales_order(shopify_order, setting, company=None):
 		so.save(ignore_permissions=True)
 		so.submit()
 
-		# order webhook payloads carry no metafields - fetch the mapped
-		# ones separately and stamp them onto the submitted document
 		sync_metafields_to_doc("Sales Order", so.name, "Order", shopify_order.get("id"))
 
 		if shopify_order.get("note"):

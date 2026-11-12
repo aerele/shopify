@@ -84,8 +84,7 @@ class ShopifySetting(SettingController):
 		if self.is_enabled():
 			setup_custom_fields()
 
-		# after setup_custom_fields so the metafield section can anchor to the
-		# connector's own custom fields
+		# runs after setup_custom_fields so the metafield section can anchor to connector fields
 		self._validate_metafield_mappings()
 
 	def on_update(self):
@@ -318,9 +317,7 @@ class ShopifySetting(SettingController):
 			self.webhooks = list()  # remove all webhooks
 
 	def _metafield_refresh_topics(self) -> list[str]:
-		"""Update topics (METAFIELD_REFRESH_TOPICS) for resources with metafield
-		mappings. They carry no metafields themselves - their handlers re-query
-		the mapped values when the resource is edited in Shopify."""
+		"""Update topics for resources that have metafield mappings."""
 		return list(
 			{
 				METAFIELD_REFRESH_TOPICS[row.shopify_resource]
@@ -339,8 +336,7 @@ class ShopifySetting(SettingController):
 			self.last_inventory_sync = get_datetime("1970-01-01")
 
 	def _validate_metafield_mappings(self):
-		"""Validate metafield mapping rows and make sure the ERPNext target
-		fields exist, creating them when missing."""
+		"""Validate mapping rows and create missing target fields."""
 		seen_mappings = set()
 		seen_fields = set()
 		for row in self.metafield_mapping:
@@ -378,9 +374,7 @@ class ShopifySetting(SettingController):
 		metafields.ensure_metafield_custom_fields(self.metafield_mapping)
 
 	def _validate_target_field(self, row, doctype: str | None) -> None:
-		"""A mapping must never write onto a core field of the target doctype
-		(every sync would silently overwrite real data) or onto a custom field
-		that cannot hold a text value."""
+		"""Reject mappings onto core fields or non-text fieldtypes."""
 		if not doctype:
 			return
 

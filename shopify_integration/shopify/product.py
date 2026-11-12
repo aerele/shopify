@@ -60,8 +60,6 @@ class ShopifyProduct:
 			product_dict = _fetch_shopify_product(self.product_id)
 			self._make_item(product_dict)
 		elif not self.variant_id:
-			# already linked (e.g. imported before a metafield mapping existed):
-			# refresh the mapped metafield values instead of skipping silently
 			sync_product_metafields(self.product_id)
 
 	def _make_item(self, product_dict):
@@ -143,8 +141,6 @@ class ShopifyProduct:
 			"default_supplier": self._get_supplier(product_dict),
 		}
 
-		# product-level metafields (Shopify's extra custom data) land on every
-		# item created from this product - the template and its variants
 		apply_metafields(item_dict, "Product", product_dict.get("metafields"))
 
 		integration_item_code = product_dict["id"]  # shopify product_id
@@ -362,8 +358,7 @@ def _normalize_gql_product(node) -> dict:
 	image = node.get("featuredImage") or {}
 
 	metafields = [
-		# type is needed to detect metaobject references, which are resolved
-		# to display names instead of stored as raw GIDs
+		# type is needed to detect metaobject references
 		{
 			"namespace": mf.get("namespace"),
 			"key": mf.get("key"),
