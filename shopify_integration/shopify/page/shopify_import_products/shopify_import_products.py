@@ -88,6 +88,7 @@ query products($first: Int, $after: String, $last: Int, $before: String, $query:
 			node {
 				id
 				title
+				updatedAt
 				variants(first: 100) {
 					edges {
 						node {
@@ -145,6 +146,7 @@ def _fetch_products_from_shopify(from_=None, limit=20, query=None):
 			{
 				"id": _gid_to_id(node.get("id")),
 				"title": node.get("title"),
+				"updated_at": node.get("updatedAt"),
 				"variants": variants,
 			}
 		)

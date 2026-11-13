@@ -1,6 +1,6 @@
 """Product Sync adapter for the shared Ecommerce Core page.
 
-Registered through the ``ecommerce_product_sync_providers`` hook (see hooks.py).
+Registered through the ``ecommerce_product_import_providers`` hook (see hooks.py).
 A thin facade over the existing Shopify product sync; the page's list and
 search reuse the GraphQL helpers of the Shopify import page.
 """
@@ -11,7 +11,7 @@ import json
 
 import frappe
 from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
-from ecommerce_core.product_sync.adapter import ProductSyncAdapter
+from ecommerce_core.product_import.adapter import ProductImportAdapter
 from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
@@ -26,8 +26,8 @@ from shopify_integration.shopify.page.shopify_import_products.shopify_import_pro
 from shopify_integration.shopify.product import ShopifyProduct
 
 
-class ShopifyProductSyncAdapter(ProductSyncAdapter):
-	"""Contract implementation for ``ecommerce_core.product_sync``."""
+class ShopifyProductImportAdapter(ProductImportAdapter):
+	"""Contract implementation for ``ecommerce_core.product_import``."""
 
 	def is_enabled(self) -> bool:
 		return bool(frappe.db.get_single_value(SETTING_DOCTYPE, "enable_shopify"))
@@ -44,12 +44,16 @@ class ShopifyProductSyncAdapter(ProductSyncAdapter):
 					"name": product["title"],
 					"sku": next((v["sku"] for v in product["variants"] if v.get("sku")), None),
 					"variants": product["variants"],
+					"updated_at": product.get("updated_at"),
 				}
 				for product in page["products"]
 			],
 			"total": None,
 			"next_cursor": page["next_cursor"],
 		}
+
+	def get_product_updated_at(self, product: dict):
+		return product.get("updated_at")
 
 	def get_provider_count(self) -> int:
 		return int(get_shopify_product_count() or 0)
