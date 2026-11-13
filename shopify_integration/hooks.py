@@ -5,21 +5,23 @@ app_description = "Shopify ERPNext Integration"
 app_email = "integrations-support@aerele.in"
 app_license = "GNU GPL v3.0"
 
+app_logo_url = "/assets/shopify_integration/images/shopify.svg"
+app_home = "/desk/shopify"
+
+add_to_apps_screen = [
+	{
+		"name": app_name,
+		"logo": app_logo_url,
+		"title": app_title,
+		"route": app_home,
+		"has_permission": "shopify_integration.check_app_permission",
+	}
+]
+
 # Apps
 # ------------------
 
 required_apps = ["ecommerce_core"]
-
-# Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "shopify_integration",
-# 		"logo": "/assets/shopify_integration/logo.png",
-# 		"title": "Shopify Integration",
-# 		"route": "/shopify_integration",
-# 		"has_permission": "shopify_integration.api.permission.has_app_permission"
-# 	}
-# ]
 
 # Includes in <head>
 # ------------------
