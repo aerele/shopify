@@ -15,6 +15,22 @@
 					"values": ["Default Title"]
 				}
 			],
+			"metafields": {
+				"nodes": [
+					{
+						"namespace": "custom",
+						"key": "fabric",
+						"value": "100% Cotton",
+						"type": "single_line_text_field"
+					},
+					{
+						"namespace": "custom",
+						"key": "care_instructions",
+						"value": "Machine wash cold",
+						"type": "multi_line_text_field"
+					}
+				]
+			},
 			"variants": {
 				"edges": [
 					{

@@ -2,6 +2,7 @@
 # For license information, please see LICENSE
 
 import json
+import re
 
 import frappe
 from ecommerce_core.controllers.setting import (
@@ -14,7 +15,7 @@ from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 from frappe.utils import get_datetime
 from shopify import GraphQL
 
-from shopify_integration.shopify import connection
+from shopify_integration.shopify import connection, metafields
 from shopify_integration.shopify.constants import (
 	ADDRESS_ID_FIELD,
 	AUTH_METHOD_OAUTH,
@@ -22,6 +23,7 @@ from shopify_integration.shopify.constants import (
 	CUSTOMER_ID_FIELD,
 	FULLFILLMENT_ID_FIELD,
 	ITEM_SELLING_RATE_FIELD,
+	METAFIELD_REFRESH_TOPICS,
 	ORDER_ID_FIELD,
 	ORDER_ITEM_DISCOUNT_FIELD,
 	ORDER_NUMBER_FIELD,
@@ -81,6 +83,9 @@ class ShopifySetting(SettingController):
 
 		if self.is_enabled():
 			setup_custom_fields()
+
+		# runs after setup_custom_fields so the metafield section can anchor to connector fields
+		self._validate_metafield_mappings()
 
 	def on_update(self):
 		if self.is_enabled() and not self.is_old_data_migrated:
@@ -245,7 +250,10 @@ class ShopifySetting(SettingController):
 				password = self._get_secret("password")
 
 			try:
-				new_webhooks = connection.register_webhooks(self.shopify_url, password)
+				extra_topics = self._metafield_refresh_topics()
+				new_webhooks = connection.register_webhooks(
+					self.shopify_url, password, extra_topics=extra_topics
+				)
 			except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
 				create_shopify_log(
 					status="Warning",
@@ -257,7 +265,9 @@ class ShopifySetting(SettingController):
 				)
 				return
 
-			if self.authentication_method == AUTH_METHOD_OAUTH and len(new_webhooks) < len(WEBHOOK_EVENTS):
+			if self.authentication_method == AUTH_METHOD_OAUTH and len(new_webhooks) < len(
+				WEBHOOK_EVENTS
+			) + len(extra_topics):
 				# A short result usually means the token lacks the scopes its app
 				# version now requires (scopes are fixed at token issue). Drop it so
 				# the retry after fixing the app in the Dev Dashboard re-mints.
@@ -306,6 +316,16 @@ class ShopifySetting(SettingController):
 
 			self.webhooks = list()  # remove all webhooks
 
+	def _metafield_refresh_topics(self) -> list[str]:
+		"""Update topics for resources that have metafield mappings."""
+		return list(
+			{
+				METAFIELD_REFRESH_TOPICS[row.shopify_resource]
+				for row in self.metafield_mapping
+				if row.shopify_resource in METAFIELD_REFRESH_TOPICS
+			}
+		)
+
 	def _validate_warehouse_links(self):
 		for wh_map in self.shopify_warehouse_mapping:
 			if not wh_map.erpnext_warehouse:
@@ -314,6 +334,69 @@ class ShopifySetting(SettingController):
 	def _initalize_default_values(self):
 		if not self.last_inventory_sync:
 			self.last_inventory_sync = get_datetime("1970-01-01")
+
+	def _validate_metafield_mappings(self):
+		"""Validate mapping rows and create missing target fields."""
+		seen_mappings = set()
+		seen_fields = set()
+		for row in self.metafield_mapping:
+			if not row.namespace or not row.key:
+				frappe.throw(_("Row #{0}: Metafield namespace and key are required").format(row.idx))
+			if not re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", row.erpnext_fieldname or ""):
+				frappe.throw(
+					_(
+						"Row #{0}: ERPNext fieldname must start with a letter and contain"
+						" only letters, numbers and underscores"
+					).format(row.idx)
+				)
+
+			mapping = (row.shopify_resource, row.namespace, row.key)
+			if mapping in seen_mappings:
+				frappe.throw(
+					_("Row #{0}: duplicate mapping for {1} metafield {2}.{3}").format(
+						row.idx, row.shopify_resource, row.namespace, row.key
+					)
+				)
+			seen_mappings.add(mapping)
+
+			doctype = metafields.RESOURCE_TO_DOCTYPE.get(row.shopify_resource)
+			field = (doctype, row.erpnext_fieldname)
+			if field in seen_fields:
+				frappe.throw(
+					_("Row #{0}: fieldname {1} is already used by another mapping row").format(
+						row.idx, row.erpnext_fieldname
+					)
+				)
+			seen_fields.add(field)
+
+			self._validate_target_field(row, doctype)
+
+		metafields.ensure_metafield_custom_fields(self.metafield_mapping)
+
+	def _validate_target_field(self, row, doctype: str | None) -> None:
+		"""Reject mappings onto core fields or non-text fieldtypes."""
+		if not doctype:
+			return
+
+		df = frappe.get_meta(doctype).get_field(row.erpnext_fieldname)
+		if not df:
+			return  # created by ensure_metafield_custom_fields below
+
+		is_custom_field = frappe.db.exists(
+			"Custom Field", {"dt": doctype, "fieldname": row.erpnext_fieldname}
+		)
+		if not is_custom_field:
+			frappe.throw(
+				_("Row #{0}: {1} is a core field of {2}; metafields must map to a custom field").format(
+					row.idx, row.erpnext_fieldname, doctype
+				)
+			)
+		if df.fieldtype not in metafields.TEXT_FIELD_TYPES:
+			frappe.throw(
+				_("Row #{0}: field {1} on {2} is of type {3} and cannot hold a metafield value").format(
+					row.idx, row.erpnext_fieldname, doctype, df.fieldtype
+				)
+			)
 
 	@frappe.whitelist()
 	@connection.temp_shopify_session

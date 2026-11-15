@@ -41,6 +41,8 @@
   "section_break_22",
   "html_16",
   "taxes",
+  "metafield_sync_section",
+  "metafield_mapping",
   "section_break_zeoy",
   "default_sales_tax_account",
   "column_break_qibo",
@@ -280,6 +282,18 @@
    "options": "Shopify Tax Account"
   },
   {
+   "description": "Copy extra Shopify data (metafields) from products, orders and customers onto the linked ERPNext document; the target field is created automatically and the value stays updated.",
+   "fieldname": "metafield_sync_section",
+   "fieldtype": "Section Break",
+   "label": "Metafield Sync (Shopify to ERPNext)"
+  },
+  {
+   "fieldname": "metafield_mapping",
+   "fieldtype": "Table",
+   "label": "Metafield Mapping",
+   "options": "Shopify Metafield Mapping"
+  },
+  {
    "fieldname": "erpnext_to_shopify_sync_section",
    "fieldtype": "Section Break",
    "label": "ERPNext to Shopify Sync"
@@ -439,7 +453,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-25 11:00:00.000000",
+ "modified": "2026-11-12 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Shopify",
  "name": "Shopify Setting",

@@ -19,6 +19,7 @@ from shopify_integration.shopify.constants import (
 	SETTING_DOCTYPE,
 )
 from shopify_integration.shopify.customer import ShopifyCustomer
+from shopify_integration.shopify.metafields import sync_metafields_to_doc
 from shopify_integration.shopify.product import create_items_if_not_exist, get_item_code
 from shopify_integration.shopify.utils import create_shopify_log
 
@@ -88,6 +89,8 @@ def reconcile_existing_order(order, request_id=None):
 			return
 
 		setting = frappe.get_doc(SETTING_DOCTYPE)
+
+		sync_metafields_to_doc("Sales Order", sales_order.name, "Order", order.get("id"))
 
 		if order.get("financial_status") == "paid":
 			create_sales_invoice(order, setting, sales_order)
@@ -177,10 +180,13 @@ def create_sales_order(shopify_order, setting, company=None):
 
 		if company:
 			so.update({"company": company, "status": "Draft"})
+
 		so.flags.ignore_mandatory = True
 		so.flags.shopiy_order_json = json.dumps(shopify_order)
 		so.save(ignore_permissions=True)
 		so.submit()
+
+		sync_metafields_to_doc("Sales Order", so.name, "Order", shopify_order.get("id"))
 
 		if shopify_order.get("note"):
 			so.add_comment(text=f"Order Note: {shopify_order.get('note')}")
