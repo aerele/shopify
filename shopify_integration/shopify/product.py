@@ -247,7 +247,7 @@ class ShopifyProduct:
 
 
 _PRODUCT_QUERY = """
-query product($id: ID!) {
+query product($id: ID!, $variantsCursor: String) {
 	product(id: $id) {
 		id
 		title
@@ -261,7 +261,7 @@ query product($id: ID!) {
 			name
 			values
 		}
-		variants(first: 100) {
+		variants(first: 250, after: $variantsCursor) {
 			edges {
 				node {
 					id
@@ -281,6 +281,10 @@ query product($id: ID!) {
 						value
 					}
 				}
+			}
+			pageInfo {
+				hasNextPage
+				endCursor
 			}
 		}
 	}
@@ -355,21 +359,73 @@ def _normalize_gql_product(node) -> dict:
 	}
 
 
-def _fetch_shopify_product(product_id) -> dict:
-	response = json.loads(GraphQL().execute(_PRODUCT_QUERY, {"id": f"gid://shopify/Product/{product_id}"}))
+def _fetch_all_variant_pages(query: str, product_id) -> tuple[dict, list]:
+	"""Run `query` page by page. Returns (product node, all variant edges).
 
-	if response.get("errors"):
-		frappe.throw(
-			_("Shopify GraphQL error fetching product {0}: {1}").format(
-				product_id, json.dumps(response["errors"])
-			)
+	The query must take $id and $variantsCursor and select product.variants
+	with edges and pageInfo (one page holds at most 250 variants).
+	"""
+	product = None
+	variant_edges = []
+	cursor = None
+
+	while True:
+		response = json.loads(
+			GraphQL().execute(query, {"id": f"gid://shopify/Product/{product_id}", "variantsCursor": cursor})
 		)
 
-	product = response.get("data", {}).get("product")
-	if not product:
-		frappe.throw(_("Shopify product {0} not found (may have been deleted).").format(product_id))
+		if response.get("errors"):
+			frappe.throw(
+				_("Shopify GraphQL error fetching product {0}: {1}").format(
+					product_id, json.dumps(response["errors"])
+				)
+			)
 
+		page_product = response.get("data", {}).get("product")
+		if not page_product:
+			frappe.throw(_("Shopify product {0} not found (may have been deleted).").format(product_id))
+
+		product = product or page_product
+
+		connection = page_product.get("variants") or {}
+		variant_edges.extend(connection.get("edges") or [])
+
+		page_info = connection.get("pageInfo") or {}
+		cursor = page_info.get("endCursor")
+
+		if not (page_info.get("hasNextPage") and cursor):
+			return product, variant_edges
+
+
+def _fetch_shopify_product(product_id) -> dict:
+	product, variant_edges = _fetch_all_variant_pages(_PRODUCT_QUERY, product_id)
+	product["variants"] = {"edges": variant_edges}
 	return _normalize_gql_product(product)
+
+
+_PRODUCT_VARIANT_IDS_QUERY = """
+query product($id: ID!, $variantsCursor: String) {
+	product(id: $id) {
+		variants(first: 250, after: $variantsCursor) {
+			edges {
+				node {
+					id
+				}
+			}
+			pageInfo {
+				hasNextPage
+				endCursor
+			}
+		}
+	}
+}
+"""
+
+
+def fetch_all_variant_ids(product_id) -> list[str]:
+	"""Ids of every variant of a product, following the variants pagination."""
+	_, variant_edges = _fetch_all_variant_pages(_PRODUCT_VARIANT_IDS_QUERY, product_id)
+	return [_gid_to_id((edge.get("node") or {}).get("id")) for edge in variant_edges]
 
 
 def _add_weight_details(product_dict):
