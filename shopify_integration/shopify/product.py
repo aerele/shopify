@@ -3,7 +3,7 @@ import json
 import frappe
 from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
 from frappe import _, msgprint
-from frappe.utils import cint, cstr
+from frappe.utils import cint, cstr, get_url
 from frappe.utils.nestedset import get_root_of
 from shopify import GraphQL
 
@@ -547,6 +547,84 @@ mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsB
 }
 """
 
+_PRODUCT_CREATE_MEDIA_MUTATION = """
+mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+	productCreateMedia(productId: $productId, media: $media) {
+		media {
+			... on MediaImage {
+				id
+				alt
+				image {
+					url
+				}
+			}
+		}
+		mediaUserErrors {
+			field
+			message
+		}
+		product {
+			id
+		}
+	}
+}
+"""
+
+
+def _get_public_image_url(image: str | None) -> str | None:
+	if not image:
+		return None
+	if image.startswith(("http://", "https://")):
+		return image
+	if image.startswith(("//", "/private/")) or not image.startswith("/"):
+		return None
+	return get_url(image)
+
+
+def upload_item_image_to_shopify(product_id: str, image: str | None, alt: str) -> bool:
+	"""Attach an ERPNext item image to a Shopify product. ProductInput has no image field;
+	media is attached via a separate productCreateMedia call."""
+	image_url = _get_public_image_url(image)
+	if not image_url:
+		create_shopify_log(
+			status="Error",
+			method="shopify_integration.shopify.product.upload_item_image_to_shopify",
+			message=f"Image {image!r} of item {alt} is not publicly reachable, not uploaded to Shopify.",
+		)
+		return False
+
+	try:
+		response = json.loads(
+			GraphQL().execute(
+				_PRODUCT_CREATE_MEDIA_MUTATION,
+				{
+					"productId": f"gid://shopify/Product/{product_id}",
+					"media": [{"originalSource": image_url, "mediaContentType": "IMAGE", "alt": alt}],
+				},
+			)
+		)
+	except Exception as e:
+		create_shopify_log(
+			status="Error",
+			method="shopify_integration.shopify.product.upload_item_image_to_shopify",
+			message=f"Image upload for item {alt} (product {product_id}) failed: {e}",
+		)
+		return False
+
+	result = response.get("data", {}).get("productCreateMedia") or {}
+	user_errors = result.get("mediaUserErrors") or []
+
+	if response.get("errors") or user_errors:
+		create_shopify_log(
+			status="Error",
+			response_data=response,
+			exception=response.get("errors") or user_errors,
+			method="shopify_integration.shopify.product.upload_item_image_to_shopify",
+		)
+		return False
+
+	return True
+
 
 def _save_shopify_product(mutation: str, mutation_name: str, product_input: dict) -> dict | None:
 	"""Run productCreate/productUpdate and return the normalized product dict,
@@ -677,11 +755,15 @@ def upload_erpnext_item(doc, method=None):
 				)
 				ecom_item.insert()
 
-		write_upload_log(status=is_successful, product=product, item=item)
-	elif setting.update_shopify_item_on_update:
-		product = _fetch_shopify_product(product_id)
-		if product:
-			product_input = map_erpnext_item_to_shopify(erpnext_item=template_item)
+			if is_successful and (template_image := template_item.image or item.image):
+				upload_item_image_to_shopify(product.get("id"), template_image, template_item.item_code)
+
+			write_upload_log(status=is_successful, product=product, item=item)
+		elif setting.update_shopify_item_on_update:
+			product = _fetch_shopify_product(product_id)
+			if product:
+				existing_featured_image = (product.get("image") or {}).get("src")
+				product_input = map_erpnext_item_to_shopify(erpnext_item=template_item)
 			weight = product_input.pop("weight", None)
 			weight_unit = product_input.pop("weight_unit", None)
 			product_input["id"] = f"gid://shopify/Product/{product_id}"
@@ -710,7 +792,14 @@ def upload_erpnext_item(doc, method=None):
 						)
 				map_erpnext_variant_to_shopify_variant(product, item, variant_attributes)
 
-			write_upload_log(status=is_successful, product=product, item=item, action="Updated")
+				if (
+					is_successful
+					and not existing_featured_image
+					and (template_image := template_item.image or item.image)
+				):
+					upload_item_image_to_shopify(product_id, template_image, template_item.item_code)
+
+				write_upload_log(status=is_successful, product=product, item=item, action="Updated")
 
 
 def map_erpnext_variant_to_shopify_variant(shopify_product: dict, erpnext_item, variant_attributes):
