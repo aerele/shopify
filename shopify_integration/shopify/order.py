@@ -231,8 +231,13 @@ def get_order_items(order_items, setting, delivery_date, taxes_inclusive, discou
 			original_price = flt(shopify_item.get("price"))
 			qty = cint(shopify_item.get("quantity"))
 
-			# Set price_list_rate to original Shopify price (before any discounts)
-			item_dict["price_list_rate"] = original_price
+			unit_price = original_price
+			if taxes_inclusive and qty:
+				total_taxes = sum(flt(tax.get("price")) for tax in shopify_item.get("tax_lines") or [])
+				unit_price -= total_taxes / qty
+
+			# Set price_list_rate to the tax-exclusive base (before any discounts)
+			item_dict["price_list_rate"] = unit_price
 
 			# Get item-level discount info from unified discount_info
 			item_discount = None
@@ -256,10 +261,10 @@ def get_order_items(order_items, setting, delivery_date, taxes_inclusive, discou
 				item_dict[ORDER_ITEM_DISCOUNT_FIELD] = item_discount_amount
 
 				# Calculate rate (item-level only, order-level applied by ERPNext)
-				item_dict["rate"] = original_price - (item_discount_amount / qty)
+				item_dict["rate"] = unit_price - (item_discount_amount / qty)
 			else:
-				# No item-level discount, rate = original price
-				item_dict["rate"] = original_price
+				# No item-level discount, rate = tax-exclusive price
+				item_dict["rate"] = unit_price
 
 			items.append(item_dict)
 		else:
