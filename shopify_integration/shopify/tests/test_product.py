@@ -3,7 +3,11 @@
 
 import frappe
 
-from shopify_integration.shopify.product import ShopifyProduct
+from shopify_integration.shopify.product import (
+	ShopifyProduct,
+	_get_public_image_url,
+	upload_item_image_to_shopify,
+)
 
 from .utils import TestCase
 
@@ -118,6 +122,59 @@ class TestProduct(TestCase):
 			),
 			"39845261541529",
 		)
+
+	def test_get_public_image_url(self):
+		self.assertEqual(_get_public_image_url("https://example.com/img.jpg"), "https://example.com/img.jpg")
+		self.assertIsNone(_get_public_image_url(None))
+		self.assertIsNone(_get_public_image_url(""))
+		# private files can't be fetched by Shopify's servers
+		self.assertIsNone(_get_public_image_url("/private/files/img.jpg"))
+		# protocol-relative and non-path values are rejected, not guessed at
+		self.assertIsNone(_get_public_image_url("//example.com/img.jpg"))
+		self.assertIsNone(_get_public_image_url("img.jpg"))
+		# site-relative public files become absolute URLs
+		url = _get_public_image_url("/files/img.jpg")
+		self.assertTrue(url.startswith("http"))
+		self.assertTrue(url.endswith("/files/img.jpg"))
+
+	def test_upload_item_image_to_shopify(self):
+		self.fake_graphql(
+			{
+				"data": {
+					"productCreateMedia": {
+						"media": [
+							{
+								"id": "gid://shopify/MediaImage/1",
+								"alt": "ITEM-1",
+								"image": {"url": "https://cdn.shopify.com/s/files/1.jpg"},
+							}
+						],
+						"mediaUserErrors": [],
+						"product": {"id": "gid://shopify/Product/123"},
+					}
+				}
+			}
+		)
+
+		self.assertTrue(upload_item_image_to_shopify("123", "https://example.com/img.jpg", "ITEM-1"))
+
+	def test_upload_item_image_to_shopify_skips_private_files(self):
+		self.assertFalse(upload_item_image_to_shopify("123", "/private/files/img.jpg", "ITEM-1"))
+
+	def test_upload_item_image_to_shopify_reports_shopify_errors(self):
+		self.fake_graphql(
+			{
+				"data": {
+					"productCreateMedia": {
+						"media": [],
+						"mediaUserErrors": [{"field": ["media"], "message": "Could not download the file"}],
+						"product": {"id": "gid://shopify/Product/123"},
+					}
+				}
+			}
+		)
+
+		self.assertFalse(upload_item_image_to_shopify("123", "https://example.com/missing.jpg", "ITEM-1"))
 
 
 def create_item_attributes():
