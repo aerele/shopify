@@ -16,7 +16,6 @@ from shopify import GraphQL
 
 from shopify_integration.shopify import connection
 from shopify_integration.shopify.constants import (
-	ACCOUNT_DOCTYPE,
 	ADDRESS_ID_FIELD,
 	AUTH_METHOD_OAUTH,
 	AUTH_METHOD_STATIC,
@@ -85,7 +84,6 @@ class ShopifyAccount(SettingController):
 
 		self._set_default_authentication_method()
 		self._validate_authentication_change()
-		self._validate_single_enabled_account()
 		self._validate_authentication_fields()
 		self._handle_webhooks()
 		self._validate_warehouse_links()
@@ -97,22 +95,6 @@ class ShopifyAccount(SettingController):
 	def on_update(self):
 		if self.is_enabled() and not self.is_old_data_migrated:
 			migrate_from_old_connector(shopify_account=self.name)
-
-	def _validate_single_enabled_account(self):
-		"""Incoming webhooks are attributed to the only enabled account, so a second
-		enabled account would leave the webhooks of both stores unattributable."""
-		if not self.is_enabled():
-			return
-
-		other_account = frappe.db.exists(
-			ACCOUNT_DOCTYPE, {"enable_shopify": 1, "name": ("!=", self.name or "")}
-		)
-		if other_account:
-			frappe.throw(
-				_(
-					"Shopify Account {0} is already enabled. Only one account can be enabled at a time."
-				).format(frappe.bold(other_account))
-			)
 
 	def before_save(self):
 		"""Pre-generate OAuth token on save for better UX."""
