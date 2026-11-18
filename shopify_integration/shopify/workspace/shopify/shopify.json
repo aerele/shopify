@@ -25,9 +25,9 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Shopify Setting",
+   "label": "Shopify Account",
    "link_count": 0,
-   "link_to": "Shopify Setting",
+   "link_to": "Shopify Account",
    "link_type": "DocType",
    "onboard": 1,
    "type": "Link"
