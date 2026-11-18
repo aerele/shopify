@@ -32,24 +32,72 @@ shopify.ProductImporter = class {
 		frappe.run_serially([
 			() => this.addAccountField(),
 			() => this.addMarkup(),
-			() => this.fetchProductCount(),
-			() => this.addTable(),
-			() => this.checkSyncStatus(),
 			() => this.listen(),
+			() => this.selectDefaultAccount(),
+			() => this.load(),
 		]);
 	}
 
+	async selectDefaultAccount() {
+		if (this.shopifyAccount) return;
+
+		// with exactly one enabled account there is nothing to choose
+		const accounts = await frappe.db.get_list("Shopify Account", {
+			filters: { enable_shopify: 1 },
+			pluck: "name",
+		});
+		if (accounts.length === 1) {
+			this.shopifyAccount = accounts[0];
+			this.accountField.set_value(this.shopifyAccount);
+		}
+	}
+
+	async load() {
+		if (!this.shopifyAccount) {
+			this.wrapper
+				.find("#shopify-product-list")
+				.html(`<div class="text-center">${__("Select a Shopify Account.")}</div>`);
+			// the message replaced the table's markup; build a new table on the next selection
+			this.shopifyProductTable = null;
+			this.wrapper.find(".shopify-datatable-footer").hide();
+			return;
+		}
+
+		this.fetchProductCount();
+		const products = await this.fetchShopifyProducts();
+		// null: another account was selected meanwhile and is loading its own products
+		if (!products) return;
+
+		if (this.shopifyProductTable) {
+			this.shopifyProductTable.refresh(products);
+		} else {
+			this.addTable(products);
+		}
+		await this.checkSyncStatus();
+	}
+
+	// job and progress events are per account, so imports of two shops stay apart
+	get syncJobName() {
+		return `shopify.job.sync.all.products.${this.shopifyAccount}`;
+	}
+
+	get syncEvent() {
+		return `shopify.key.sync.all.products.${this.shopifyAccount}`;
+	}
+
 	async checkSyncStatus() {
+		const account = this.shopifyAccount;
+		const syncJobName = this.syncJobName;
 		const jobs = await frappe.db.get_list("RQ Job", {
 			filters: { status: ("in", ("queued", "started")) },
 		});
-		this.syncRunning =
-			jobs.find((job) => job.job_name == "shopify.job.sync.all.products") !== undefined;
+		if (account !== this.shopifyAccount) return;
 
-		if (this.syncRunning) {
-			this.toggleSyncAllButton();
-			this.logSync();
-		}
+		this.syncRunning = jobs.find((job) => job.job_name == syncJobName) !== undefined;
+
+		// the button may still show the import of the previously selected account
+		this.toggleSyncAllButton(this.syncRunning);
+		if (this.syncRunning) this.logSync();
 	}
 
 	addAccountField() {
@@ -65,7 +113,7 @@ shopify.ProductImporter = class {
 				const account = this.accountField.get_value() || null;
 				if (account === this.shopifyAccount) return;
 				this.shopifyAccount = account;
-				this.reload();
+				this.load();
 			},
 		});
 	}
@@ -77,11 +125,6 @@ shopify.ProductImporter = class {
 			// the field's change handler reloads the products
 			this.accountField?.set_value(account);
 		}
-	}
-
-	async reload() {
-		this.fetchProductCount();
-		this.shopifyProductTable.refresh(await this.fetchShopifyProducts());
 	}
 
 	addMarkup() {
@@ -150,13 +193,15 @@ shopify.ProductImporter = class {
 	}
 
 	async fetchProductCount() {
+		const account = this.shopifyAccount;
 		try {
 			const {
 				message: { erpnextCount, shopifyCount, syncedCount },
 			} = await frappe.call({
 				method: "shopify_integration.shopify.page.shopify_import_products.shopify_import_products.get_product_count",
-				args: { shopify_account: this.shopifyAccount },
+				args: { shopify_account: account },
 			});
+			if (account !== this.shopifyAccount) return;
 
 			this.wrapper.find("#count-products-shopify").text(shopifyCount);
 			this.wrapper.find("#count-products-erpnext").text(erpnextCount);
@@ -166,7 +211,7 @@ shopify.ProductImporter = class {
 		}
 	}
 
-	async addTable() {
+	addTable(data) {
 		const listElement = this.wrapper.find("#shopify-product-list")[0];
 		this.shopifyProductTable = new frappe.DataTable(listElement, {
 			columns: [
@@ -203,21 +248,30 @@ shopify.ProductImporter = class {
 					focusable: false,
 				},
 			],
-			data: await this.fetchShopifyProducts(),
+			data,
 			layout: "fixed",
 		});
 
 		this.wrapper.find(".shopify-datatable-footer").show();
 	}
 
+	// returns null when the selected account changed while the products were loading
 	async fetchShopifyProducts(from_ = null) {
+		const account = this.shopifyAccount;
 		try {
 			const {
 				message: { products, nextUrl, prevUrl },
 			} = await frappe.call({
 				method: "shopify_integration.shopify.page.shopify_import_products.shopify_import_products.get_shopify_products",
-				args: { from_, limit: this.pageSize, search_term: this.searchTerm || null },
+				args: {
+					from_,
+					limit: this.pageSize,
+					search_term: this.searchTerm || null,
+					shopify_account: account,
+				},
 			});
+			if (account !== this.shopifyAccount) return null;
+
 			this.nextUrl = nextUrl;
 			this.prevUrl = prevUrl;
 
@@ -337,7 +391,7 @@ shopify.ProductImporter = class {
 		this.shopifyProductTable.showToastMessage("Loading...");
 
 		const newProducts = await this.fetchShopifyProducts(from_);
-		this.shopifyProductTable.refresh(newProducts);
+		if (newProducts) this.shopifyProductTable.refresh(newProducts);
 
 		$(".btn-paginate, .btn-page-size").prop("disabled", false);
 		this.shopifyProductTable.clearToastMessage();
@@ -366,18 +420,26 @@ shopify.ProductImporter = class {
 		await this._reloadProducts(null);
 	}
 
-	syncAll() {
-		this.checkSyncStatus();
-		this.toggleSyncAllButton();
+	async syncAll() {
+		if (!this.shopifyAccount) {
+			frappe.msgprint(__("Select a Shopify Account."));
+			return;
+		}
+		const account = this.shopifyAccount;
+		await this.checkSyncStatus();
+		// another account was selected meanwhile: do not import it unasked
+		if (account !== this.shopifyAccount) return;
 
 		if (this.syncRunning) {
 			frappe.msgprint(__("Sync already in progress"));
-		} else {
-			frappe.call({
-				method: "shopify_integration.shopify.page.shopify_import_products.shopify_import_products.import_all_products",
-				args: { shopify_account: this.shopifyAccount },
-			});
+			return;
 		}
+
+		this.toggleSyncAllButton();
+		frappe.call({
+			method: "shopify_integration.shopify.page.shopify_import_products.shopify_import_products.import_all_products",
+			args: { shopify_account: this.shopifyAccount },
+		});
 
 		// sync progress
 		this.logSync();
@@ -392,7 +454,14 @@ shopify.ProductImporter = class {
 		const _syncedCounter = $("#count-products-synced");
 		const _erpnextCounter = $("#count-products-erpnext");
 
-		frappe.realtime.on("shopify.key.sync.all.products", ({ message, synced, done, error }) => {
+		const account = this.shopifyAccount;
+		const syncEvent = this.syncEvent;
+		frappe.realtime.off(syncEvent);
+		frappe.realtime.on(syncEvent, ({ message, synced, done, error }) => {
+			if (done) frappe.realtime.off(syncEvent);
+			// the page now shows another account; its log and button are not this import's
+			if (account !== this.shopifyAccount) return;
+
 			message = `<pre class="mb-0">${message}</pre>`;
 			_log.append(message);
 			_log.scrollTop(_log[0].scrollHeight);
@@ -400,7 +469,6 @@ shopify.ProductImporter = class {
 			if (synced) this.updateSyncedCount(_syncedCounter, _erpnextCounter);
 
 			if (done) {
-				frappe.realtime.off("shopify.key.sync.all.products");
 				this.toggleSyncAllButton(false);
 				this.fetchProductCount();
 				this.syncRunning = false;
