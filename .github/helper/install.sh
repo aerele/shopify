@@ -46,6 +46,7 @@ sed -i 's/socketio:/# socketio:/g' Procfile
 sed -i 's/redis_socketio:/# redis_socketio:/g' Procfile
 
 bench get-app "https://github.com/${frappeuser}/erpnext" --branch "$erpnextbranch" --resolve-deps
+bench get-app payments https://github.com/frappe/payments.git --branch "$erpnextbranch"
 bench get-app ecommerce_core https://github.com/aerele/ecommerce-core.git
 bench get-app shopify_integration "${GITHUB_WORKSPACE}"
 bench setup requirements --dev
@@ -54,5 +55,6 @@ bench start &>> ~/frappe-bench/bench_start.log &
 CI=Yes bench build --app frappe &
 bench --site test_site reinstall --yes
 
+bench --verbose --site test_site install-app payments
 bench --verbose --site test_site install-app ecommerce_core
 bench --verbose --site test_site install-app shopify_integration
