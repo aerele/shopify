@@ -19,8 +19,10 @@ Reference:
 """
 
 import json
+import re
 import time
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 import frappe
 import requests
@@ -32,12 +34,42 @@ from shopify_integration.shopify.constants import (
 	AUTH_METHOD_OAUTH,
 	HISTORICAL_ORDERS_ACCESS_SCOPE,
 	REQUIRED_ACCESS_SCOPES,
-	SETTING_DOCTYPE,
 )
 from shopify_integration.shopify.utils import create_shopify_log
 
 # Default Shopify token lifetime when the response omits expires_in (~24h)
 DEFAULT_TOKEN_EXPIRY_SECONDS = 86399
+
+SHOPIFY_HOST_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*\.myshopify\.com$")
+
+
+def normalize_shopify_url(shopify_url: str) -> str:
+	"""Return a normalized myshopify.com hostname and reject unsafe URLs."""
+	value = (shopify_url or "").strip()
+	parsed = urlsplit(value if "://" in value else f"https://{value}")
+
+	try:
+		port = parsed.port
+	except ValueError:
+		port = -1
+
+	hostname = (parsed.hostname or "").lower()
+	if (
+		parsed.scheme not in {"http", "https"}
+		or parsed.username
+		or parsed.password
+		or port is not None
+		or parsed.path not in {"", "/"}
+		or parsed.query
+		or parsed.fragment
+		or not SHOPIFY_HOST_PATTERN.fullmatch(hostname)
+	):
+		frappe.throw(
+			_("Shop URL must be a valid Shopify hostname such as store-name.myshopify.com."),
+			title=_("Invalid Shopify URL"),
+		)
+
+	return hostname
 
 
 def get_oauth_token_endpoint(shopify_url: str) -> str:
@@ -116,7 +148,7 @@ def generate_oauth_token(shopify_url: str, client_id: str, client_secret: str) -
 					"The Shopify app is missing the Admin API access scopes: {0}. Add them"
 					" to the app version in the Shopify Dev Dashboard (app → App versions →"
 					" Configuration → Admin API integration), release the version, reinstall"
-					" the app on the shop, and save Shopify Setting again — otherwise webhook"
+					" the app on the shop, and save the Shopify Account again — otherwise webhook"
 					" registration and sync calls will fail."
 				).format(", ".join(missing_scopes)),
 			)
@@ -215,10 +247,10 @@ def calculate_token_expiry(expires_in_seconds: int):
 
 def refresh_oauth_token(setting, client_secret=None) -> str:
 	"""
-	Generate a fresh OAuth token and persist it encrypted in Shopify Setting.
+	Generate a fresh OAuth token and persist it encrypted in the Shopify Account.
 
 	Args:
-	    setting: ShopifySetting document instance
+	    setting: ShopifyAccount document instance
 	    client_secret: Optional — pass directly during save cycle when
 	                   the password hasn't been committed to DB yet.
 
@@ -257,7 +289,7 @@ def refresh_oauth_token(setting, client_secret=None) -> str:
 
 	# Store token encrypted (same mechanism as the password field)
 	set_encrypted_password(
-		SETTING_DOCTYPE,
+		setting.doctype,
 		setting.name,
 		token_data["access_token"],
 		fieldname="oauth_access_token",
@@ -277,7 +309,7 @@ def refresh_oauth_token(setting, client_secret=None) -> str:
 		setting.flags.ignore_save_passwords = ignored
 
 	frappe.db.set_value(
-		SETTING_DOCTYPE,
+		setting.doctype,
 		setting.name,
 		"token_expires_at",
 		get_datetime_str(expires_at),
@@ -308,8 +340,8 @@ def invalidate_cached_token(setting) -> None:
 		return
 
 	try:
-		remove_encrypted_password(SETTING_DOCTYPE, setting.name, fieldname="oauth_access_token")
-		frappe.db.set_value(SETTING_DOCTYPE, setting.name, "token_expires_at", None, update_modified=False)
+		remove_encrypted_password(setting.doctype, setting.name, fieldname="oauth_access_token")
+		frappe.db.set_value(setting.doctype, setting.name, "token_expires_at", None, update_modified=False)
 		setting.token_expires_at = None
 	except Exception as e:
 		create_shopify_log(
