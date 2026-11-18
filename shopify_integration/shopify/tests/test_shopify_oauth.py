@@ -532,15 +532,22 @@ class TestValidateRequestHmac(unittest.TestCase):
 class TestStoreRequestData(unittest.TestCase):
 	@patch("shopify_integration.shopify.connection.process_request")
 	@patch("shopify_integration.shopify.connection._validate_request")
-	@patch("shopify_integration.shopify.connection.get_enabled_accounts", return_value=[])
-	def test_disabled_integration_ignores_remote_webhooks(self, mock_accounts, mock_validate, mock_process):
+	@patch("shopify_integration.shopify.connection.create_shopify_log")
+	@patch("shopify_integration.shopify.connection.frappe.db.exists", return_value=None)
+	@patch("shopify_integration.shopify.connection.frappe.db.get_value", return_value=None)
+	def test_webhook_without_an_enabled_account_is_not_processed(
+		self, mock_get_value, mock_exists, mock_log, mock_validate, mock_process
+	):
 		from shopify_integration.shopify.connection import store_request_data
 
 		had_request = hasattr(frappe.local, "request")
 		previous_request = getattr(frappe.local, "request", None)
 		frappe.local.request = MagicMock()
+		frappe.local.request.headers = {"X-Shopify-Shop-Domain": "disabled.myshopify.com"}
+		frappe.local.request.data = b"{}"
 		try:
-			store_request_data()
+			with self.assertRaises(frappe.ValidationError):
+				store_request_data()
 		finally:
 			if had_request:
 				frappe.local.request = previous_request
