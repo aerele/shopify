@@ -35,6 +35,17 @@ ecommerce_product_import_providers = [
 	}
 ]
 
+
+# Ecommerce Core dashboard provider registration (same integration value).
+ecommerce_dashboard_providers = [
+	{
+		"integration": "shopify",
+		"settings_doctype": "Shopify Account",
+		"label": "Shopify",
+		"adapter": "shopify_integration.shopify.dashboard.ShopifyDashboardAdapter",
+	}
+]
+
 # Includes in <head>
 # ------------------
 
