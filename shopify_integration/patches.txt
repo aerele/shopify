@@ -6,3 +6,4 @@
 # Patches added in this section will be executed after doctypes are migrated
 shopify_integration.patches.migrate_shopify_setting_to_account
 shopify_integration.patches.set_default_shopify_auth_method
+shopify_integration.patches.backfill_shopify_account_on_orders

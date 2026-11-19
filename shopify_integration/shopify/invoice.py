@@ -3,6 +3,7 @@ from erpnext.selling.doctype.sales_order.mapper import make_sales_invoice
 from frappe.utils import cint, cstr, flt, getdate, nowdate
 
 from shopify_integration.shopify.constants import (
+	ORDER_ACCOUNT_FIELD,
 	ORDER_ID_FIELD,
 	ORDER_NUMBER_FIELD,
 )
@@ -74,6 +75,7 @@ def create_sales_invoice(shopify_order, setting, so) -> tuple[str, str]:
 	sales_invoice = make_sales_invoice(so.name, ignore_permissions=True)
 	sales_invoice.set(ORDER_ID_FIELD, str(shopify_order.get("id")))
 	sales_invoice.set(ORDER_NUMBER_FIELD, shopify_order.get("name"))
+	sales_invoice.set(ORDER_ACCOUNT_FIELD, setting.name)
 	sales_invoice.set_posting_time = 1
 	sales_invoice.posting_date = posting_date
 	sales_invoice.due_date = posting_date

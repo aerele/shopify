@@ -23,6 +23,29 @@ add_to_apps_screen = [
 
 required_apps = ["ecommerce_core"]
 
+
+# Shared Product Sync page (ecommerce_core)
+# integration = the Ecommerce Item.integration value (MODULE_NAME).
+ecommerce_product_import_providers = [
+	{
+		"integration": "shopify",
+		"label": "Shopify",
+		"settings_doctype": "Shopify Account",
+		"adapter": "shopify_integration.product_import.ShopifyProductImportAdapter",
+	}
+]
+
+
+# Ecommerce Core dashboard provider registration (same integration value).
+ecommerce_dashboard_providers = [
+	{
+		"integration": "shopify",
+		"settings_doctype": "Shopify Account",
+		"label": "Shopify",
+		"adapter": "shopify_integration.shopify.dashboard.ShopifyDashboardAdapter",
+	}
+]
+
 # Includes in <head>
 # ------------------
 
