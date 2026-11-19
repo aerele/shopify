@@ -112,11 +112,16 @@ query products($first: Int, $after: String, $last: Int, $before: String, $query:
 			node {
 				id
 				title
+				updatedAt
 				variants(first: 100) {
 					edges {
 						node {
 							sku
 						}
+					}
+					pageInfo {
+						hasNextPage
+						endCursor
 					}
 				}
 			}
@@ -147,6 +152,45 @@ def _decode_cursor(from_):
 	return None, "next"
 
 
+_VARIANT_PAGE_QUERY = """
+query product($id: ID!, $after: String) {
+	product(id: $id) {
+		variants(first: 100, after: $after) {
+			edges {
+				node {
+					sku
+				}
+			}
+			pageInfo {
+				hasNextPage
+				endCursor
+			}
+		}
+	}
+}
+"""
+
+# Follow variant cursors up to this many extra pages (100 variants each).
+MAX_VARIANT_PAGES = 10
+
+
+def _append_remaining_variants(product_gid, variants_block, variants):
+	"""Add variants past the first page so products with 100+ variants are not truncated."""
+	info = variants_block.get("pageInfo") or {}
+	if not info.get("hasNextPage"):
+		return variants
+	after = info.get("endCursor")
+	for _page in range(MAX_VARIANT_PAGES):
+		response = json.loads(GraphQL().execute(_VARIANT_PAGE_QUERY, {"id": product_gid, "after": after}))
+		block = ((response.get("data") or {}).get("product") or {}).get("variants") or {}
+		variants.extend({"sku": v.get("node", {}).get("sku")} for v in block.get("edges", []))
+		info = block.get("pageInfo") or {}
+		if not info.get("hasNextPage"):
+			return variants
+		after = info.get("endCursor")
+	return variants
+
+
 @temp_shopify_session
 def _fetch_products_from_shopify(from_=None, limit=20, query=None, shopify_account: str | None = None):
 	cursor, direction = _decode_cursor(from_)
@@ -162,13 +206,14 @@ def _fetch_products_from_shopify(from_=None, limit=20, query=None, shopify_accou
 	products = []
 	for edge in products_data.get("edges", []):
 		node = edge.get("node") or {}
-		variants = [
-			{"sku": v.get("node", {}).get("sku")} for v in (node.get("variants") or {}).get("edges", [])
-		]
+		variants_block = node.get("variants") or {}
+		variants = [{"sku": v.get("node", {}).get("sku")} for v in variants_block.get("edges", [])]
+		variants = _append_remaining_variants(node.get("id"), variants_block, variants)
 		products.append(
 			{
 				"id": _gid_to_id(node.get("id")),
 				"title": node.get("title"),
+				"updated_at": node.get("updatedAt"),
 				"variants": variants,
 			}
 		)
