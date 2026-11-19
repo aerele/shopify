@@ -4,17 +4,32 @@ from time import process_time
 
 import frappe
 from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
+from frappe import _
 from frappe.exceptions import UniqueValidationError
 from frappe.utils import cint
 from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
-from shopify_integration.shopify.constants import MODULE_NAME
+from shopify_integration.shopify.constants import ACCOUNT_DOCTYPE, MODULE_NAME
 from shopify_integration.shopify.product import ShopifyProduct
+from shopify_integration.shopify.utils import get_account_name, get_default_account
 
 # constants
 SYNC_JOB_NAME = "shopify.job.sync.all.products"
 REALTIME_KEY = "shopify.key.sync.all.products"
+
+
+def _get_account(shopify_account: str | None = None) -> str:
+	"""Account the page works on: the one picked on the page, else the only enabled one.
+
+	The page uses the account's stored credentials, so the caller needs read access to it.
+	"""
+	account = shopify_account or get_default_account().name
+	frappe.has_permission(ACCOUNT_DOCTYPE, "read", account, throw=True)
+
+	if not frappe.db.get_value(ACCOUNT_DOCTYPE, account, "enable_shopify"):
+		frappe.throw(_("Shopify Account {0} is not enabled.").format(frappe.bold(account)))
+	return account
 
 
 def _gid_to_id(gid) -> str:
@@ -55,24 +70,33 @@ def _build_product_search_query(search_term):
 
 
 @frappe.whitelist()
-def get_shopify_products(from_: str | None = None, limit: int = 20, search_term: str | None = None):
+def get_shopify_products(
+	from_: str | None = None,
+	limit: int = 20,
+	search_term: str | None = None,
+	shopify_account: str | None = None,
+):
 	limit = cint(limit) or 20
 	if limit not in (20, 50):
 		limit = 20
 
 	query = _build_product_search_query(search_term)
-	shopify_products = fetch_all_products(from_, limit=limit, query=query)
+	shopify_products = fetch_all_products(
+		from_, limit=limit, query=query, shopify_account=_get_account(shopify_account)
+	)
 	return shopify_products
 
 
-def fetch_all_products(from_=None, limit=20, query=None):
+def fetch_all_products(from_=None, limit=20, query=None, shopify_account: str | None = None):
 	# format shopify collection for datatable
 
-	collection = _fetch_products_from_shopify(from_, limit=limit, query=query)
+	collection = _fetch_products_from_shopify(
+		from_, limit=limit, query=query, shopify_account=shopify_account
+	)
 
 	products = collection["products"]
 	for product in products:
-		product["synced"] = is_synced(product["id"])
+		product["synced"] = is_synced(product["id"], shopify_account)
 
 	return {
 		"products": products,
@@ -124,7 +148,7 @@ def _decode_cursor(from_):
 
 
 @temp_shopify_session
-def _fetch_products_from_shopify(from_=None, limit=20, query=None):
+def _fetch_products_from_shopify(from_=None, limit=20, query=None, shopify_account: str | None = None):
 	cursor, direction = _decode_cursor(from_)
 
 	if direction == "prev":
@@ -159,14 +183,19 @@ def _fetch_products_from_shopify(from_=None, limit=20, query=None):
 
 
 @frappe.whitelist()
-def get_product_count():
+def get_product_count(shopify_account: str | None = None):
+	shopify_account = _get_account(shopify_account)
+
 	items = frappe.db.get_list("Item", {"variant_of": ["is", "not set"]})
 	erpnext_count = len(items)
 
-	sync_items = frappe.db.get_list("Ecommerce Item", {"variant_of": ["is", "not set"]})
+	sync_items = frappe.db.get_list(
+		"Ecommerce Item",
+		{"variant_of": ["is", "not set"], "integration": MODULE_NAME, "shopify_account": shopify_account},
+	)
 	synced_count = len(sync_items)
 
-	shopify_count = get_shopify_product_count()
+	shopify_count = get_shopify_product_count(shopify_account=shopify_account)
 
 	return {
 		"shopifyCount": shopify_count,
@@ -185,15 +214,15 @@ _PRODUCTS_COUNT_QUERY = """
 
 
 @temp_shopify_session
-def get_shopify_product_count():
+def get_shopify_product_count(shopify_account: str | None = None):
 	response = json.loads(GraphQL().execute(_PRODUCTS_COUNT_QUERY))
 	return response.get("data", {}).get("productsCount", {}).get("count", 0)
 
 
-@frappe.whitelist()
-def sync_product(product):
+@frappe.whitelist(methods=["POST"])
+def sync_product(product: str | int, shopify_account: str | None = None):
 	try:
-		shopify_product = ShopifyProduct(product)
+		shopify_product = ShopifyProduct(product, shopify_account=_get_account(shopify_account))
 		shopify_product.sync_product()
 
 		return True
@@ -202,9 +231,9 @@ def sync_product(product):
 		return False
 
 
-@frappe.whitelist()
-def resync_product(product):
-	return _resync_product(product)
+@frappe.whitelist(methods=["POST"])
+def resync_product(product: str | int, shopify_account: str | None = None):
+	return _resync_product(product, shopify_account=_get_account(shopify_account))
 
 
 _PRODUCT_VARIANTS_QUERY = """
@@ -223,7 +252,7 @@ query product($id: ID!) {
 
 
 @temp_shopify_session
-def _resync_product(product):
+def _resync_product(product, shopify_account: str | None = None):
 	savepoint = "shopify_resync_product"
 	try:
 		response = json.loads(
@@ -234,7 +263,7 @@ def _resync_product(product):
 		frappe.db.savepoint(savepoint)
 		for edge in (item.get("variants") or {}).get("edges", []):
 			variant_id = _gid_to_id((edge.get("node") or {}).get("id"))
-			shopify_product = ShopifyProduct(product, variant_id=variant_id)
+			shopify_product = ShopifyProduct(product, variant_id=variant_id, shopify_account=shopify_account)
 			shopify_product.sync_product()
 
 		return True
@@ -243,42 +272,49 @@ def _resync_product(product):
 		return False
 
 
-def is_synced(product):
-	return ecommerce_item.is_synced(MODULE_NAME, integration_item_code=product)
+def is_synced(product, shopify_account: str | None = None):
+	account = get_account_name(shopify_account)
+	return ecommerce_item.is_synced(
+		MODULE_NAME,
+		integration_item_code=product,
+		filters={"shopify_account": account} if account else None,
+	)
 
 
-@frappe.whitelist()
-def import_all_products():
+@frappe.whitelist(methods=["POST"])
+def import_all_products(shopify_account: str | None = None):
 	frappe.enqueue(
 		queue_sync_all_products,
 		queue="long",
 		job_name=SYNC_JOB_NAME,
 		key=REALTIME_KEY,
+		shopify_account=_get_account(shopify_account),
 	)
 
 
-def queue_sync_all_products(*args, **kwargs):
+def queue_sync_all_products(*args, shopify_account: str | None = None, **kwargs):
 	start_time = process_time()
+	shopify_account = _get_account(shopify_account)
 
-	counts = get_product_count()
+	counts = get_product_count(shopify_account)
 	publish("Syncing all products...")
 
 	if counts["shopifyCount"] < counts["syncedCount"]:
 		publish("⚠ Shopify has less products than ERPNext.")
 
 	_sync = True
-	collection = _fetch_products_from_shopify(limit=100)
+	collection = _fetch_products_from_shopify(limit=100, shopify_account=shopify_account)
 	savepoint = "shopify_product_sync"
 	while _sync:
 		for product in collection["products"]:
 			try:
 				publish(f"Syncing product {product['id']}", br=False)
 				frappe.db.savepoint(savepoint)
-				if is_synced(product["id"]):
+				if is_synced(product["id"], shopify_account):
 					publish(f"Product {product['id']} already synced. Skipping...")
 					continue
 
-				shopify_product = ShopifyProduct(product["id"])
+				shopify_product = ShopifyProduct(product["id"], shopify_account=shopify_account)
 				shopify_product.sync_product()
 
 				publish(f"✅ Synced Product {product['id']}", synced=True)
@@ -295,7 +331,9 @@ def queue_sync_all_products(*args, **kwargs):
 
 		if collection["next_cursor"]:
 			frappe.db.commit()  # prevents too many write request error
-			collection = _fetch_products_from_shopify(from_=collection["next_cursor"], limit=100)
+			collection = _fetch_products_from_shopify(
+				from_=collection["next_cursor"], limit=100, shopify_account=shopify_account
+			)
 		else:
 			_sync = False
 

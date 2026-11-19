@@ -5,5 +5,5 @@
 from frappe.tests import IntegrationTestCase
 
 
-class TestShopifySetting(IntegrationTestCase):
+class TestShopifyAccount(IntegrationTestCase):
 	pass

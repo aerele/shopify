@@ -16,6 +16,7 @@ from shopify import GraphQL
 
 from shopify_integration.shopify import connection
 from shopify_integration.shopify.constants import (
+	ACCOUNT_DOCTYPE,
 	ADDRESS_ID_FIELD,
 	AUTH_METHOD_OAUTH,
 	AUTH_METHOD_STATIC,
@@ -29,10 +30,12 @@ from shopify_integration.shopify.constants import (
 	SUPPLIER_ID_FIELD,
 	WEBHOOK_EVENTS,
 )
+from shopify_integration.shopify.oauth import normalize_shopify_url
 from shopify_integration.shopify.utils import (
 	create_shopify_log,
 	ensure_old_connector_is_disabled,
 	migrate_from_old_connector,
+	normalize_shop_url,
 )
 
 _LOCATIONS_QUERY = """
@@ -62,18 +65,27 @@ def _gid_to_id(gid) -> str:
 	return str(gid).rsplit("/", 1)[-1]
 
 
-class ShopifySetting(SettingController):
+class ShopifyAccount(SettingController):
 	def is_enabled(self) -> bool:
 		return bool(self.enable_shopify)
+
+	def autoname(self):
+		# the account is named after the shop domain Shopify sends with its webhooks,
+		# so normalise the URL before it becomes the name
+		self.shopify_url = normalize_shop_url(self.shopify_url)
+		self.name = self.shopify_url
 
 	def validate(self):
 		ensure_old_connector_is_disabled()
 
 		if self.shopify_url:
-			self.shopify_url = self.shopify_url.replace("https://", "").replace("http://", "")
+			# a bare shop name is completed to its myshopify domain, then the URL is
+			# validated strictly
+			self.shopify_url = normalize_shopify_url(normalize_shop_url(self.shopify_url))
 
 		self._set_default_authentication_method()
 		self._validate_authentication_change()
+		self._validate_single_enabled_account()
 		self._validate_authentication_fields()
 		self._handle_webhooks()
 		self._validate_warehouse_links()
@@ -84,7 +96,23 @@ class ShopifySetting(SettingController):
 
 	def on_update(self):
 		if self.is_enabled() and not self.is_old_data_migrated:
-			migrate_from_old_connector()
+			migrate_from_old_connector(shopify_account=self.name)
+
+	def _validate_single_enabled_account(self):
+		"""Incoming webhooks are attributed to the only enabled account, so a second
+		enabled account would leave the webhooks of both stores unattributable."""
+		if not self.is_enabled():
+			return
+
+		other_account = frappe.db.exists(
+			ACCOUNT_DOCTYPE, {"enable_shopify": 1, "name": ("!=", self.name or "")}
+		)
+		if other_account:
+			frappe.throw(
+				_(
+					"Shopify Account {0} is already enabled. Only one account can be enabled at a time."
+				).format(frappe.bold(other_account))
+			)
 
 	def before_save(self):
 		"""Pre-generate OAuth token on save for better UX."""
@@ -110,13 +138,15 @@ class ShopifySetting(SettingController):
 				raise  # Bad credentials on rotation must block save
 			create_shopify_log(
 				status="Warning",
-				method="shopify_integration.shopify.doctype.shopify_setting.shopify_setting.before_save",
+				method="shopify_integration.shopify.doctype.shopify_account.shopify_account.before_save",
+				shopify_account=self.name,
 				message=_("Token pre-generation failed on save; will retry on first sync."),
 			)
 		except Exception as e:
 			create_shopify_log(
 				status="Warning",
-				method="shopify_integration.shopify.doctype.shopify_setting.shopify_setting.before_save",
+				method="shopify_integration.shopify.doctype.shopify_account.shopify_account.before_save",
+				shopify_account=self.name,
 				message=_("Token pre-generation failed on save; will retry on first sync."),
 				exception=str(e),
 			)
@@ -249,7 +279,8 @@ class ShopifySetting(SettingController):
 			except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
 				create_shopify_log(
 					status="Warning",
-					method="shopify_integration.shopify.doctype.shopify_setting.shopify_setting._handle_webhooks",
+					method="shopify_integration.shopify.doctype.shopify_account.shopify_account._handle_webhooks",
+					shopify_account=self.name,
 					message=_(
 						"Webhook registration failed due to network error. Disable and re-enable to retry."
 					),
@@ -296,10 +327,8 @@ class ShopifySetting(SettingController):
 				# webhook endpoint also ignores deliveries while this setting is disabled.
 				create_shopify_log(
 					status="Warning",
-					method=(
-						"shopify_integration.shopify.doctype.shopify_setting."
-						"shopify_setting._handle_webhooks"
-					),
+					method="shopify_integration.shopify.doctype.shopify_account.shopify_account._handle_webhooks",
+					shopify_account=self.name,
 					message=_("Shopify was disabled, but remote webhooks could not be removed."),
 					exception=str(e),
 				)
@@ -316,7 +345,6 @@ class ShopifySetting(SettingController):
 			self.last_inventory_sync = get_datetime("1970-01-01")
 
 	@frappe.whitelist()
-	@connection.temp_shopify_session
 	def update_location_table(self):
 		"""Fetch locations from shopify and add it to child table so user can
 		map it with correct ERPNext warehouse."""
@@ -326,23 +354,24 @@ class ShopifySetting(SettingController):
 		cursor = None
 		has_next_page = True
 
-		while has_next_page:
-			response = json.loads(GraphQL().execute(_LOCATIONS_QUERY, {"first": 250, "after": cursor}))
-			locations_data = response.get("data", {}).get("locations", {})
+		with connection.shopify_session(self):
+			while has_next_page:
+				response = json.loads(GraphQL().execute(_LOCATIONS_QUERY, {"first": 250, "after": cursor}))
+				locations_data = response.get("data", {}).get("locations", {})
 
-			for edge in locations_data.get("edges", []):
-				node = edge.get("node") or {}
-				self.append(
-					"shopify_warehouse_mapping",
-					{
-						"shopify_location_id": _gid_to_id(node.get("id")),
-						"shopify_location_name": node.get("name"),
-					},
-				)
+				for edge in locations_data.get("edges", []):
+					node = edge.get("node") or {}
+					self.append(
+						"shopify_warehouse_mapping",
+						{
+							"shopify_location_id": _gid_to_id(node.get("id")),
+							"shopify_location_name": node.get("name"),
+						},
+					)
 
-			page_info = locations_data.get("pageInfo", {})
-			has_next_page = page_info.get("hasNextPage", False)
-			cursor = page_info.get("endCursor")
+				page_info = locations_data.get("pageInfo", {})
+				has_next_page = page_info.get("hasNextPage", False)
+				cursor = page_info.get("endCursor")
 
 	def get_erpnext_warehouses(self) -> list[ERPNextWarehouse]:
 		return [wh_map.erpnext_warehouse for wh_map in self.shopify_warehouse_mapping]

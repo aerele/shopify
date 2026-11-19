@@ -1,21 +1,19 @@
 from typing import Any
 
-import frappe
 from ecommerce_core.controllers.customer import EcommerceCustomer
-from frappe import _
 from frappe.utils import cstr, validate_phone_number
 
 from shopify_integration.shopify.constants import (
 	ADDRESS_ID_FIELD,
 	CUSTOMER_ID_FIELD,
 	MODULE_NAME,
-	SETTING_DOCTYPE,
 )
+from shopify_integration.shopify.utils import get_default_account, get_shopify_account
 
 
 class ShopifyCustomer(EcommerceCustomer):
-	def __init__(self, customer_id: str):
-		self.setting = frappe.get_doc(SETTING_DOCTYPE)
+	def __init__(self, customer_id: str, shopify_account=None):
+		self.setting = get_shopify_account(shopify_account) if shopify_account else get_default_account()
 		super().__init__(customer_id, CUSTOMER_ID_FIELD, MODULE_NAME)
 
 	def sync_customer(self, customer: dict[str, Any]) -> None:

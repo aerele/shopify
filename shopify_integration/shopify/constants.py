@@ -3,12 +3,12 @@
 
 
 MODULE_NAME = "shopify"
-SETTING_DOCTYPE = "Shopify Setting"
+ACCOUNT_DOCTYPE = "Shopify Account"
 OLD_SETTINGS_DOCTYPE = "Shopify Settings"
 
 API_VERSION = "2024-01"
 
-# Authentication methods (must match the Select options in Shopify Setting)
+# Authentication methods (must match the Select options in Shopify Account)
 AUTH_METHOD_STATIC = "Static Token"
 AUTH_METHOD_OAUTH = "OAuth 2.0 Client Credentials"
 

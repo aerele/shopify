@@ -4,11 +4,11 @@ import frappe
 from frappe.modules.import_file import import_file_by_path
 
 import shopify_integration
-from shopify_integration.shopify.constants import AUTH_METHOD_STATIC, SETTING_DOCTYPE
+from shopify_integration.shopify.constants import ACCOUNT_DOCTYPE, AUTH_METHOD_STATIC
 
 
-def _reload_setting_doctype():
-	"""Reload Shopify Setting from THIS app.
+def _reload_account_doctype():
+	"""Reload Shopify Account from THIS app.
 
 	`frappe.reload_doc("shopify", ...)` cannot be used here: the module name
 	"shopify" exists in both `shopify_integration` and `ecommerce_integrations`,
@@ -16,7 +16,7 @@ def _reload_setting_doctype():
 	with the other app's (stale) definition.
 	"""
 	app_path = Path(shopify_integration.__file__).parent
-	doctype_json = app_path / "shopify" / "doctype" / "shopify_setting" / "shopify_setting.json"
+	doctype_json = app_path / "shopify" / "doctype" / "shopify_account" / "shopify_account.json"
 	import_file_by_path(str(doctype_json), force=True)
 
 
@@ -25,17 +25,14 @@ def execute():
 	Migration patch: set default authentication method for existing Shopify installations.
 	Ensures backward compatibility when introducing OAuth 2.0 support.
 
-	Existing installs get "Static Token" so their current setup continues working.
+	Existing accounts get "Static Token" so their current setup continues working. It runs
+	after the `Shopify Setting` single was migrated into a `Shopify Account`.
 	"""
-	_reload_setting_doctype()
+	_reload_account_doctype()
 
-	if frappe.db.exists("DocType", SETTING_DOCTYPE):
-		settings = frappe.get_doc(SETTING_DOCTYPE)
-
-		if not settings.authentication_method:
-			settings.db_set("authentication_method", AUTH_METHOD_STATIC, update_modified=False)
-			frappe.db.commit()
-
-			frappe.logger().info(
-				"Shopify Setting: Set default authentication method to 'Static Token' for existing installation"
-			)
+	account = frappe.qb.DocType(ACCOUNT_DOCTYPE)
+	(
+		frappe.qb.update(account)
+		.set(account.authentication_method, AUTH_METHOD_STATIC)
+		.where(account.authentication_method.isnull() | (account.authentication_method == ""))
+	).run()

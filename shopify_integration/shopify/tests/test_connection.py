@@ -8,13 +8,14 @@ from frappe.tests import IntegrationTestCase
 from shopify import GraphQL, Session
 
 from shopify_integration.shopify import connection
-from shopify_integration.shopify.constants import API_VERSION, SETTING_DOCTYPE
+from shopify_integration.shopify.constants import ACCOUNT_DOCTYPE, API_VERSION
 
 
 class TestShopifyConnection(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
-		cls.setting = frappe.get_doc(SETTING_DOCTYPE)
+		account = frappe.db.get_value(ACCOUNT_DOCTYPE, {"enable_shopify": 1})
+		cls.setting = frappe.get_doc(ACCOUNT_DOCTYPE, account) if account else None
 
 	@unittest.skip("Can't run these tests in CI")
 	def test_register_webhooks(self):
