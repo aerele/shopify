@@ -6,7 +6,7 @@ import frappe
 from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
 from frappe import _
 from frappe.exceptions import UniqueValidationError
-from frappe.utils import cint
+from frappe.utils import cint, cstr
 from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
@@ -174,20 +174,36 @@ query product($id: ID!, $after: String) {
 MAX_VARIANT_PAGES = 10
 
 
+def _raise_on_graphql_errors(response: dict, what: str) -> None:
+	"""Throw when Shopify returned top-level GraphQL errors (throttling, bad query, auth)."""
+	errors = response.get("errors")
+	if errors:
+		messages = "; ".join(cstr(e.get("message") if isinstance(e, dict) else e) for e in errors)
+		frappe.throw(_("Shopify returned an error while fetching {0}: {1}").format(what, messages))
+
+
 def _append_remaining_variants(product_gid, variants_block, variants):
-	"""Add variants past the first page so products with 100+ variants are not truncated."""
+	"""Add variants past the first page so products with 100+ variants are not truncated.
+
+	Listing only needs SKUs for display, so this stops after MAX_VARIANT_PAGES
+	extra pages and logs it; the import path (_fetch_variant_ids) has no cap.
+	"""
 	info = variants_block.get("pageInfo") or {}
-	if not info.get("hasNextPage"):
-		return variants
 	after = info.get("endCursor")
+	if not info.get("hasNextPage") or not after:
+		return variants
 	for _page in range(MAX_VARIANT_PAGES):
 		response = json.loads(GraphQL().execute(_VARIANT_PAGE_QUERY, {"id": product_gid, "after": after}))
+		_raise_on_graphql_errors(response, f"variants of {product_gid}")
 		block = ((response.get("data") or {}).get("product") or {}).get("variants") or {}
 		variants.extend({"sku": v.get("node", {}).get("sku")} for v in block.get("edges", []))
 		info = block.get("pageInfo") or {}
-		if not info.get("hasNextPage"):
+		if not info.get("hasNextPage") or not info.get("endCursor"):
 			return variants
-		after = info.get("endCursor")
+		after = info["endCursor"]
+	frappe.logger("shopify_integration").warning(
+		f"Variant listing for {product_gid} truncated after {MAX_VARIANT_PAGES + 1} pages"
+	)
 	return variants
 
 
@@ -282,13 +298,17 @@ def resync_product(product: str | int, shopify_account: str | None = None):
 
 
 _PRODUCT_VARIANTS_QUERY = """
-query product($id: ID!) {
+query product($id: ID!, $after: String) {
 	product(id: $id) {
-		variants(first: 100) {
+		variants(first: 100, after: $after) {
 			edges {
 				node {
 					id
 				}
+			}
+			pageInfo {
+				hasNextPage
+				endCursor
 			}
 		}
 	}
@@ -296,18 +316,37 @@ query product($id: ID!) {
 """
 
 
+def _fetch_variant_ids(product_id) -> list[str] | None:
+	"""Every variant id of a product, following cursors; None when the product does not exist.
+
+	Must run inside a Shopify session. Raises on GraphQL errors so a failed or
+	throttled call is never mistaken for "no variants".
+	"""
+	gid = f"gid://shopify/Product/{product_id}"
+	variant_ids: list[str] = []
+	after = None
+	while True:
+		response = json.loads(GraphQL().execute(_PRODUCT_VARIANTS_QUERY, {"id": gid, "after": after}))
+		_raise_on_graphql_errors(response, f"variants of product {product_id}")
+		product = (response.get("data") or {}).get("product")
+		if not product:
+			return None
+		block = product.get("variants") or {}
+		variant_ids.extend(_gid_to_id((edge.get("node") or {}).get("id")) for edge in block.get("edges", []))
+		info = block.get("pageInfo") or {}
+		if not info.get("hasNextPage") or not info.get("endCursor"):
+			return variant_ids
+		after = info["endCursor"]
+
+
 @temp_shopify_session
 def _resync_product(product, shopify_account: str | None = None):
 	savepoint = "shopify_resync_product"
 	try:
-		response = json.loads(
-			GraphQL().execute(_PRODUCT_VARIANTS_QUERY, {"id": f"gid://shopify/Product/{product}"})
-		)
-		item = response.get("data", {}).get("product") or {}
+		variant_ids = _fetch_variant_ids(product) or []
 
 		frappe.db.savepoint(savepoint)
-		for edge in (item.get("variants") or {}).get("edges", []):
-			variant_id = _gid_to_id((edge.get("node") or {}).get("id"))
+		for variant_id in variant_ids:
 			shopify_product = ShopifyProduct(product, variant_id=variant_id, shopify_account=shopify_account)
 			shopify_product.sync_product()
 
