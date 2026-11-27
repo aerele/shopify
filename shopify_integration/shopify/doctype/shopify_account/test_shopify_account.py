@@ -34,7 +34,7 @@ class TestShopifyAccount(IntegrationTestCase):
 		# The raw delete above is not reliably undone by the class rollback (custom-field DDL
 		# commits implicitly), so recreate and persist the fields for every later test.
 		setup_custom_fields()
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep
 		super().tearDownClass()
 
 	def test_custom_field_creation(self):
