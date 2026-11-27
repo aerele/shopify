@@ -5,6 +5,7 @@
 
 import json
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -228,9 +229,7 @@ class FakeShopifyCatalog:
 			"productType": "",
 			"vendor": "",
 			"featuredImage": None,
-			"options": [
-				{"name": self.option, "values": [f"V{i}" for i in range(1, self.variant_count + 1)]}
-			],
+			"options": [{"name": self.option, "values": [f"V{i}" for i in range(1, self.variant_count + 1)]}],
 			"variants": self._variants(),
 		}
 
@@ -271,7 +270,9 @@ class TestShopifyProductImportPagination(TestCase):
 
 		self.assertEqual(result, {"action": "created"})
 		self.assertEqual(self.mapped_variants(), {catalog.variant_id(i) for i in range(1, 121)})
-		self.assertIn(("variants", {"id": f"gid://shopify/Product/{self.product_id}", "after": "c100"}), catalog.calls)
+		self.assertIn(
+			("variants", {"id": f"gid://shopify/Product/{self.product_id}", "after": "c100"}), catalog.calls
+		)
 
 	def test_partly_mapped_product_gets_only_the_missing_variants(self):
 		self.serve(100)
@@ -292,7 +293,9 @@ class TestShopifyProductImportPagination(TestCase):
 		self.assertEqual(len(after), 120)
 		self.assertEqual(after - before, {catalog.variant_id(i) for i in range(101, 121)})
 		self.assertEqual(
-			frappe.db.count("Ecommerce Item", {"integration_item_code": str(self.product_id), "has_variants": 1}),
+			frappe.db.count(
+				"Ecommerce Item", {"integration_item_code": str(self.product_id), "has_variants": 1}
+			),
 			templates_before,
 		)
 
@@ -311,11 +314,16 @@ class TestShopifyProductImportPagination(TestCase):
 class TestShopifyThrottling(TestCase):
 	"""Shopify reports throttling as HTTP 200 + errors[].extensions.code == THROTTLED."""
 
-	EMPTY_PAGE = {
+	EMPTY_PAGE: ClassVar[dict] = {
 		"data": {
 			"products": {
 				"edges": [],
-				"pageInfo": {"hasNextPage": False, "hasPreviousPage": False, "endCursor": None, "startCursor": None},
+				"pageInfo": {
+					"hasNextPage": False,
+					"hasPreviousPage": False,
+					"endCursor": None,
+					"startCursor": None,
+				},
 			}
 		}
 	}
@@ -336,7 +344,10 @@ class TestShopifyThrottling(TestCase):
 
 		self.log = MagicMock()
 		self.sleep = MagicMock()
-		for target, value in ((f"{RUNNER_MODULE}.create_integration_log", self.log), (f"{RUNNER_MODULE}.sleep", self.sleep)):
+		for target, value in (
+			(f"{RUNNER_MODULE}.create_integration_log", self.log),
+			(f"{RUNNER_MODULE}.sleep", self.sleep),
+		):
 			patcher = patch(target, value)
 			patcher.start()
 			self.addCleanup(patcher.stop)
