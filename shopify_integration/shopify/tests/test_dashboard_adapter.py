@@ -3,6 +3,7 @@
 
 """Tests for the Shopify dashboard adapter's declarations and feeds."""
 
+import frappe
 from ecommerce_core.dashboard.adapter import DashboardAdapter
 from frappe.tests import IntegrationTestCase
 
@@ -14,9 +15,18 @@ from shopify_integration.shopify.dashboard import (
 	PAYMENT_DETAILS,
 	ShopifyDashboardAdapter,
 )
+from shopify_integration.shopify.doctype.shopify_account.shopify_account import setup_custom_fields
 
 
 class TestShopifyDashboardAdapter(IntegrationTestCase):
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		# The feeds query Shopify custom fields (e.g. Sales Order.shopify_account); make sure they
+		# exist regardless of which test ran before.
+		setup_custom_fields()
+		frappe.db.commit()
+
 	def test_adapter_implements_the_dashboard_contract(self):
 		adapter = ShopifyDashboardAdapter()
 		self.assertIsInstance(adapter, DashboardAdapter)

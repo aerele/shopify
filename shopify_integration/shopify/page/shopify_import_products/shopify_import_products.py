@@ -4,14 +4,15 @@ from time import process_time
 
 import frappe
 from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
+from ecommerce_core.product_import.exceptions import TransientProviderError
 from frappe import _
 from frappe.exceptions import UniqueValidationError
-from frappe.utils import cint, cstr
+from frappe.utils import cint
 from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import ACCOUNT_DOCTYPE, MODULE_NAME
-from shopify_integration.shopify.product import ShopifyProduct
+from shopify_integration.shopify.product import ShopifyProduct, _raise_on_graphql_errors
 from shopify_integration.shopify.utils import get_account_name, get_default_account
 
 # constants
@@ -81,9 +82,13 @@ def get_shopify_products(
 		limit = 20
 
 	query = _build_product_search_query(search_term)
-	shopify_products = fetch_all_products(
-		from_, limit=limit, query=query, shopify_account=_get_account(shopify_account)
-	)
+	try:
+		shopify_products = fetch_all_products(
+			from_, limit=limit, query=query, shopify_account=_get_account(shopify_account)
+		)
+	except TransientProviderError as e:
+		# a plain exception would surface as a generic server error on the page
+		frappe.throw(e.message, title=_("Shopify is busy"))
 	return shopify_products
 
 
@@ -174,14 +179,6 @@ query product($id: ID!, $after: String) {
 MAX_VARIANT_PAGES = 10
 
 
-def _raise_on_graphql_errors(response: dict, what: str) -> None:
-	"""Throw when Shopify returned top-level GraphQL errors (throttling, bad query, auth)."""
-	errors = response.get("errors")
-	if errors:
-		messages = "; ".join(cstr(e.get("message") if isinstance(e, dict) else e) for e in errors)
-		frappe.throw(_("Shopify returned an error while fetching {0}: {1}").format(what, messages))
-
-
 def _append_remaining_variants(product_gid, variants_block, variants):
 	"""Add variants past the first page so products with 100+ variants are not truncated.
 
@@ -217,6 +214,7 @@ def _fetch_products_from_shopify(from_=None, limit=20, query=None, shopify_accou
 		variables = {"first": limit, "after": cursor, "query": query}
 
 	response = json.loads(GraphQL().execute(_PRODUCTS_LIST_QUERY, variables))
+	_raise_on_graphql_errors(response, "products")
 	products_data = response.get("data", {}).get("products", {})
 
 	products = []
@@ -256,7 +254,10 @@ def get_product_count(shopify_account: str | None = None):
 	)
 	synced_count = len(sync_items)
 
-	shopify_count = get_shopify_product_count(shopify_account=shopify_account)
+	try:
+		shopify_count = get_shopify_product_count(shopify_account=shopify_account)
+	except TransientProviderError as e:
+		frappe.throw(e.message, title=_("Shopify is busy"))
 
 	return {
 		"shopifyCount": shopify_count,
@@ -277,6 +278,7 @@ _PRODUCTS_COUNT_QUERY = """
 @temp_shopify_session
 def get_shopify_product_count(shopify_account: str | None = None):
 	response = json.loads(GraphQL().execute(_PRODUCTS_COUNT_QUERY))
+	_raise_on_graphql_errors(response, "product count")
 	return response.get("data", {}).get("productsCount", {}).get("count", 0)
 
 
@@ -387,7 +389,10 @@ def queue_sync_all_products(*args, shopify_account: str | None = None, **kwargs)
 		publish("⚠ Shopify has less products than ERPNext.", shopify_account=shopify_account)
 
 	_sync = True
-	collection = _fetch_products_from_shopify(limit=100, shopify_account=shopify_account)
+	try:
+		collection = _fetch_products_from_shopify(limit=100, shopify_account=shopify_account)
+	except TransientProviderError as e:
+		return _stop_sync_on_throttle(e, shopify_account)
 	savepoint = "shopify_product_sync"
 	while _sync:
 		for product in collection["products"]:
@@ -426,15 +431,25 @@ def queue_sync_all_products(*args, shopify_account: str | None = None, **kwargs)
 
 		if collection["next_cursor"]:
 			frappe.db.commit()  # prevents too many write request error
-			collection = _fetch_products_from_shopify(
-				from_=collection["next_cursor"], limit=100, shopify_account=shopify_account
-			)
+			try:
+				collection = _fetch_products_from_shopify(
+					from_=collection["next_cursor"], limit=100, shopify_account=shopify_account
+				)
+			except TransientProviderError as e:
+				return _stop_sync_on_throttle(e, shopify_account)
 		else:
 			_sync = False
 
 	end_time = process_time()
 	publish(f"🎉 Done in {end_time - start_time}s", done=True, shopify_account=shopify_account)
 	return True
+
+
+def _stop_sync_on_throttle(exc, shopify_account):
+	"""End the import with a readable message instead of leaving the page waiting."""
+	publish(f"❌ {exc.message}", error=True, shopify_account=shopify_account)
+	publish(_("Import stopped; run it again to continue."), done=True, shopify_account=shopify_account)
+	return False
 
 
 def publish(message, synced=False, error=False, done=False, br=True, shopify_account=None):

@@ -23,10 +23,19 @@ from .shopify_account import setup_custom_fields
 class TestShopifyAccount(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
+		super().setUpClass()
 		frappe.db.sql(
 			"""delete from `tabCustom Field`
 			where name like '%shopify%'"""
 		)
+
+	@classmethod
+	def tearDownClass(cls):
+		# The raw delete above is not reliably undone by the class rollback (custom-field DDL
+		# commits implicitly), so recreate and persist the fields for every later test.
+		setup_custom_fields()
+		frappe.db.commit()
+		super().tearDownClass()
 
 	def test_custom_field_creation(self):
 		setup_custom_fields()
