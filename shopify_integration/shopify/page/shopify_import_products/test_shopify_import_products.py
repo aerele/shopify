@@ -9,6 +9,7 @@ from shopify_integration.shopify.product import ShopifyProduct
 from ...tests.utils import TestCase
 from .shopify_import_products import (
 	_build_product_search_query,
+	_fetch_variant_ids,
 	get_shopify_products,
 	queue_sync_all_products,
 )
@@ -234,3 +235,52 @@ class TestShopifyImportProducts(TestCase):
 			get_shopify_products(limit=999)
 
 		self.assertEqual(captured["first"], 20)
+
+	def _patch_variant_pages(self, pages):
+		"""Patch GraphQL so successive execute() calls return the given response dicts."""
+		calls = []
+
+		class FakeGraphQL:
+			def execute(self, query, variables=None, operation_name=None):
+				calls.append(variables)
+				return json.dumps(pages[len(calls) - 1])
+
+		module = "shopify_integration.shopify.page.shopify_import_products.shopify_import_products"
+		return patch(f"{module}.GraphQL", FakeGraphQL), calls
+
+	@staticmethod
+	def _variant_page(ids, end_cursor=None):
+		return {
+			"data": {
+				"product": {
+					"variants": {
+						"edges": [{"node": {"id": f"gid://shopify/ProductVariant/{i}"}} for i in ids],
+						"pageInfo": {"hasNextPage": bool(end_cursor), "endCursor": end_cursor},
+					}
+				}
+			}
+		}
+
+	def test_fetch_variant_ids_follows_all_pages(self):
+		first = [str(i) for i in range(100)]
+		second = ["100", "101"]
+		patcher, calls = self._patch_variant_pages(
+			[self._variant_page(first, end_cursor="c1"), self._variant_page(second)]
+		)
+		with patcher:
+			ids = _fetch_variant_ids("42")
+
+		self.assertEqual(ids, first + second)
+		self.assertEqual([c["after"] for c in calls], [None, "c1"])
+
+	def test_fetch_variant_ids_raises_on_graphql_errors(self):
+		patcher, _calls = self._patch_variant_pages(
+			[self._variant_page(["1"], end_cursor="c1"), {"errors": [{"message": "Throttled"}]}]
+		)
+		with patcher, self.assertRaises(frappe.ValidationError):
+			_fetch_variant_ids("42")
+
+	def test_fetch_variant_ids_missing_product(self):
+		patcher, _calls = self._patch_variant_pages([{"data": {"product": None}}])
+		with patcher:
+			self.assertIsNone(_fetch_variant_ids("42"))

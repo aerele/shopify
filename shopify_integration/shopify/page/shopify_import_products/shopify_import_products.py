@@ -4,6 +4,7 @@ from time import process_time
 
 import frappe
 from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
+from ecommerce_core.product_import.exceptions import TransientProviderError
 from frappe import _
 from frappe.exceptions import UniqueValidationError
 from frappe.utils import cint
@@ -11,7 +12,7 @@ from shopify import GraphQL
 
 from shopify_integration.shopify.connection import temp_shopify_session
 from shopify_integration.shopify.constants import ACCOUNT_DOCTYPE, MODULE_NAME
-from shopify_integration.shopify.product import ShopifyProduct
+from shopify_integration.shopify.product import ShopifyProduct, _raise_on_graphql_errors
 from shopify_integration.shopify.utils import get_account_name, get_default_account
 
 # constants
@@ -81,9 +82,13 @@ def get_shopify_products(
 		limit = 20
 
 	query = _build_product_search_query(search_term)
-	shopify_products = fetch_all_products(
-		from_, limit=limit, query=query, shopify_account=_get_account(shopify_account)
-	)
+	try:
+		shopify_products = fetch_all_products(
+			from_, limit=limit, query=query, shopify_account=_get_account(shopify_account)
+		)
+	except TransientProviderError as e:
+		# a plain exception would surface as a generic server error on the page
+		frappe.throw(e.message, title=_("Shopify is busy"))
 	return shopify_products
 
 
@@ -112,11 +117,16 @@ query products($first: Int, $after: String, $last: Int, $before: String, $query:
 			node {
 				id
 				title
+				updatedAt
 				variants(first: 100) {
 					edges {
 						node {
 							sku
 						}
+					}
+					pageInfo {
+						hasNextPage
+						endCursor
 					}
 				}
 			}
@@ -147,6 +157,53 @@ def _decode_cursor(from_):
 	return None, "next"
 
 
+_VARIANT_PAGE_QUERY = """
+query product($id: ID!, $after: String) {
+	product(id: $id) {
+		variants(first: 100, after: $after) {
+			edges {
+				node {
+					sku
+				}
+			}
+			pageInfo {
+				hasNextPage
+				endCursor
+			}
+		}
+	}
+}
+"""
+
+# Follow variant cursors up to this many extra pages (100 variants each).
+MAX_VARIANT_PAGES = 10
+
+
+def _append_remaining_variants(product_gid, variants_block, variants):
+	"""Add variants past the first page so products with 100+ variants are not truncated.
+
+	Listing only needs SKUs for display, so this stops after MAX_VARIANT_PAGES
+	extra pages and logs it; the import path (_fetch_variant_ids) has no cap.
+	"""
+	info = variants_block.get("pageInfo") or {}
+	after = info.get("endCursor")
+	if not info.get("hasNextPage") or not after:
+		return variants
+	for _page in range(MAX_VARIANT_PAGES):
+		response = json.loads(GraphQL().execute(_VARIANT_PAGE_QUERY, {"id": product_gid, "after": after}))
+		_raise_on_graphql_errors(response, f"variants of {product_gid}")
+		block = ((response.get("data") or {}).get("product") or {}).get("variants") or {}
+		variants.extend({"sku": v.get("node", {}).get("sku")} for v in block.get("edges", []))
+		info = block.get("pageInfo") or {}
+		if not info.get("hasNextPage") or not info.get("endCursor"):
+			return variants
+		after = info["endCursor"]
+	frappe.logger("shopify_integration").warning(
+		f"Variant listing for {product_gid} truncated after {MAX_VARIANT_PAGES + 1} pages"
+	)
+	return variants
+
+
 @temp_shopify_session
 def _fetch_products_from_shopify(from_=None, limit=20, query=None, shopify_account: str | None = None):
 	cursor, direction = _decode_cursor(from_)
@@ -157,18 +214,20 @@ def _fetch_products_from_shopify(from_=None, limit=20, query=None, shopify_accou
 		variables = {"first": limit, "after": cursor, "query": query}
 
 	response = json.loads(GraphQL().execute(_PRODUCTS_LIST_QUERY, variables))
+	_raise_on_graphql_errors(response, "products")
 	products_data = response.get("data", {}).get("products", {})
 
 	products = []
 	for edge in products_data.get("edges", []):
 		node = edge.get("node") or {}
-		variants = [
-			{"sku": v.get("node", {}).get("sku")} for v in (node.get("variants") or {}).get("edges", [])
-		]
+		variants_block = node.get("variants") or {}
+		variants = [{"sku": v.get("node", {}).get("sku")} for v in variants_block.get("edges", [])]
+		variants = _append_remaining_variants(node.get("id"), variants_block, variants)
 		products.append(
 			{
 				"id": _gid_to_id(node.get("id")),
 				"title": node.get("title"),
+				"updated_at": node.get("updatedAt"),
 				"variants": variants,
 			}
 		)
@@ -195,7 +254,10 @@ def get_product_count(shopify_account: str | None = None):
 	)
 	synced_count = len(sync_items)
 
-	shopify_count = get_shopify_product_count(shopify_account=shopify_account)
+	try:
+		shopify_count = get_shopify_product_count(shopify_account=shopify_account)
+	except TransientProviderError as e:
+		frappe.throw(e.message, title=_("Shopify is busy"))
 
 	return {
 		"shopifyCount": shopify_count,
@@ -216,6 +278,7 @@ _PRODUCTS_COUNT_QUERY = """
 @temp_shopify_session
 def get_shopify_product_count(shopify_account: str | None = None):
 	response = json.loads(GraphQL().execute(_PRODUCTS_COUNT_QUERY))
+	_raise_on_graphql_errors(response, "product count")
 	return response.get("data", {}).get("productsCount", {}).get("count", 0)
 
 
@@ -237,13 +300,17 @@ def resync_product(product: str | int, shopify_account: str | None = None):
 
 
 _PRODUCT_VARIANTS_QUERY = """
-query product($id: ID!) {
+query product($id: ID!, $after: String) {
 	product(id: $id) {
-		variants(first: 100) {
+		variants(first: 100, after: $after) {
 			edges {
 				node {
 					id
 				}
+			}
+			pageInfo {
+				hasNextPage
+				endCursor
 			}
 		}
 	}
@@ -251,18 +318,37 @@ query product($id: ID!) {
 """
 
 
+def _fetch_variant_ids(product_id) -> list[str] | None:
+	"""Every variant id of a product, following cursors; None when the product does not exist.
+
+	Must run inside a Shopify session. Raises on GraphQL errors so a failed or
+	throttled call is never mistaken for "no variants".
+	"""
+	gid = f"gid://shopify/Product/{product_id}"
+	variant_ids: list[str] = []
+	after = None
+	while True:
+		response = json.loads(GraphQL().execute(_PRODUCT_VARIANTS_QUERY, {"id": gid, "after": after}))
+		_raise_on_graphql_errors(response, f"variants of product {product_id}")
+		product = (response.get("data") or {}).get("product")
+		if not product:
+			return None
+		block = product.get("variants") or {}
+		variant_ids.extend(_gid_to_id((edge.get("node") or {}).get("id")) for edge in block.get("edges", []))
+		info = block.get("pageInfo") or {}
+		if not info.get("hasNextPage") or not info.get("endCursor"):
+			return variant_ids
+		after = info["endCursor"]
+
+
 @temp_shopify_session
 def _resync_product(product, shopify_account: str | None = None):
 	savepoint = "shopify_resync_product"
 	try:
-		response = json.loads(
-			GraphQL().execute(_PRODUCT_VARIANTS_QUERY, {"id": f"gid://shopify/Product/{product}"})
-		)
-		item = response.get("data", {}).get("product") or {}
+		variant_ids = _fetch_variant_ids(product) or []
 
 		frappe.db.savepoint(savepoint)
-		for edge in (item.get("variants") or {}).get("edges", []):
-			variant_id = _gid_to_id((edge.get("node") or {}).get("id"))
+		for variant_id in variant_ids:
 			shopify_product = ShopifyProduct(product, variant_id=variant_id, shopify_account=shopify_account)
 			shopify_product.sync_product()
 
@@ -303,7 +389,10 @@ def queue_sync_all_products(*args, shopify_account: str | None = None, **kwargs)
 		publish("⚠ Shopify has less products than ERPNext.", shopify_account=shopify_account)
 
 	_sync = True
-	collection = _fetch_products_from_shopify(limit=100, shopify_account=shopify_account)
+	try:
+		collection = _fetch_products_from_shopify(limit=100, shopify_account=shopify_account)
+	except TransientProviderError as e:
+		return _stop_sync_on_throttle(e, shopify_account)
 	savepoint = "shopify_product_sync"
 	while _sync:
 		for product in collection["products"]:
@@ -342,15 +431,25 @@ def queue_sync_all_products(*args, shopify_account: str | None = None, **kwargs)
 
 		if collection["next_cursor"]:
 			frappe.db.commit()  # prevents too many write request error
-			collection = _fetch_products_from_shopify(
-				from_=collection["next_cursor"], limit=100, shopify_account=shopify_account
-			)
+			try:
+				collection = _fetch_products_from_shopify(
+					from_=collection["next_cursor"], limit=100, shopify_account=shopify_account
+				)
+			except TransientProviderError as e:
+				return _stop_sync_on_throttle(e, shopify_account)
 		else:
 			_sync = False
 
 	end_time = process_time()
 	publish(f"🎉 Done in {end_time - start_time}s", done=True, shopify_account=shopify_account)
 	return True
+
+
+def _stop_sync_on_throttle(exc, shopify_account):
+	"""End the import with a readable message instead of leaving the page waiting."""
+	publish(f"❌ {exc.message}", error=True, shopify_account=shopify_account)
+	publish(_("Import stopped; run it again to continue."), done=True, shopify_account=shopify_account)
+	return False
 
 
 def publish(message, synced=False, error=False, done=False, br=True, shopify_account=None):

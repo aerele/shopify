@@ -9,6 +9,7 @@ from shopify_integration.shopify.constants import (
 	CUSTOMER_ID_FIELD,
 	FULLFILLMENT_ID_FIELD,
 	ITEM_SELLING_RATE_FIELD,
+	ORDER_ACCOUNT_FIELD,
 	ORDER_ID_FIELD,
 	ORDER_ITEM_DISCOUNT_FIELD,
 	ORDER_NUMBER_FIELD,
@@ -22,10 +23,19 @@ from .shopify_account import setup_custom_fields
 class TestShopifyAccount(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
+		super().setUpClass()
 		frappe.db.sql(
 			"""delete from `tabCustom Field`
 			where name like '%shopify%'"""
 		)
+
+	@classmethod
+	def tearDownClass(cls):
+		# The raw delete above is not reliably undone by the class rollback (custom-field DDL
+		# commits implicitly), so recreate and persist the fields for every later test.
+		setup_custom_fields()
+		frappe.db.commit()  # nosemgrep
+		super().tearDownClass()
 
 	def test_custom_field_creation(self):
 		setup_custom_fields()
@@ -44,6 +54,7 @@ class TestShopifyAccount(IntegrationTestCase):
 				CUSTOMER_ID_FIELD,
 				FULLFILLMENT_ID_FIELD,
 				ITEM_SELLING_RATE_FIELD,
+				ORDER_ACCOUNT_FIELD,
 				ORDER_ID_FIELD,
 				ORDER_NUMBER_FIELD,
 				ORDER_STATUS_FIELD,

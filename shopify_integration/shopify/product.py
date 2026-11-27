@@ -2,6 +2,7 @@ import json
 
 import frappe
 from ecommerce_core.ecommerce_core.doctype.ecommerce_item import ecommerce_item
+from ecommerce_core.product_import.exceptions import TransientProviderError
 from frappe import _, msgprint
 from frappe.utils import cint, cstr, now
 from frappe.utils.nestedset import get_root_of
@@ -71,6 +72,16 @@ class ShopifyProduct:
 			with shopify_session(self.setting):
 				product_dict = _fetch_shopify_product(self.product_id)
 				self._make_item(product_dict)
+
+	def sync_missing_variants(self):
+		"""Create whatever is not yet mapped for a product that is already partly synced.
+
+		Unlike sync_product() this runs without the is_synced() guard; _make_item() is
+		idempotent (_link_existing_template skips existing links, create_ecommerce_item
+		returns early for mapped template/variants), so only the missing rows are added."""
+		with shopify_session(self.setting):
+			product_dict = _fetch_shopify_product(self.product_id)
+			self._make_item(product_dict)
 
 	def _make_item(self, product_dict):
 		_add_weight_details(product_dict)
@@ -383,10 +394,75 @@ query product($id: ID!) {
 					}
 				}
 			}
+			pageInfo {
+				hasNextPage
+				endCursor
+			}
 		}
 	}
 }
 """
+
+# Remaining variant pages for _fetch_shopify_product (same node fields as _PRODUCT_QUERY).
+_PRODUCT_VARIANT_PAGE_QUERY = """
+query productVariants($id: ID!, $after: String) {
+	product(id: $id) {
+		variants(first: 100, after: $after) {
+			edges {
+				node {
+					id
+					title
+					sku
+					price
+					inventoryItem {
+						measurement {
+							weight {
+								value
+								unit
+							}
+						}
+					}
+					selectedOptions {
+						name
+						value
+					}
+				}
+			}
+			pageInfo {
+				hasNextPage
+				endCursor
+			}
+		}
+	}
+}
+"""
+
+
+def _raise_on_graphql_errors(response: dict, what: str) -> None:
+	"""Raise when Shopify returned top-level GraphQL errors (throttling, bad query, auth).
+
+	Shopify reports rate limiting as HTTP 200 with errors[].extensions.code == "THROTTLED";
+	that is raised as TransientProviderError so the import runner retries it. Any other
+	error is permanent and goes through frappe.throw as before."""
+	errors = response.get("errors")
+	if not errors:
+		return
+
+	if isinstance(errors, dict):
+		errors = [errors]
+	messages = "; ".join(cstr(e.get("message") if isinstance(e, dict) else e) for e in errors)
+
+	throttled = any(
+		isinstance(e, dict) and ((e.get("extensions") or {}).get("code") == "THROTTLED") for e in errors
+	)
+	if throttled:
+		raise TransientProviderError(
+			_("Shopify is rate limiting requests while fetching {0}. Please try again in a moment.").format(
+				what
+			)
+		)
+
+	frappe.throw(_("Shopify returned an error while fetching {0}: {1}").format(what, messages))
 
 
 def _gid_to_id(gid) -> str:
@@ -457,19 +533,34 @@ def _normalize_gql_product(node) -> dict:
 
 
 def _fetch_shopify_product(product_id) -> dict:
-	response = json.loads(GraphQL().execute(_PRODUCT_QUERY, {"id": f"gid://shopify/Product/{product_id}"}))
+	gid = f"gid://shopify/Product/{product_id}"
+	what = _("product {0}").format(product_id)
+	response = json.loads(GraphQL().execute(_PRODUCT_QUERY, {"id": gid}))
+	_raise_on_graphql_errors(response, what)
 
-	if response.get("errors"):
-		frappe.throw(
-			_("Shopify GraphQL error fetching product {0}: {1}").format(
-				product_id, json.dumps(response["errors"])
-			)
-		)
-
-	product = response.get("data", {}).get("product")
+	product = (response.get("data") or {}).get("product")
 	if not product:
 		frappe.throw(_("Shopify product {0} not found (may have been deleted).").format(product_id))
 
+	# Products can have more than 100 variants; follow the cursor so none are dropped.
+	variants_block = product.get("variants") or {}
+	edges = list(variants_block.get("edges") or [])
+	page_info = variants_block.get("pageInfo") or {}
+	seen_cursors = set()
+	while page_info.get("hasNextPage"):
+		cursor = page_info.get("endCursor")
+		if not cursor or cursor in seen_cursors:
+			break
+		seen_cursors.add(cursor)
+
+		page = json.loads(GraphQL().execute(_PRODUCT_VARIANT_PAGE_QUERY, {"id": gid, "after": cursor}))
+		_raise_on_graphql_errors(page, what)
+
+		page_block = (((page.get("data") or {}).get("product")) or {}).get("variants") or {}
+		edges.extend(page_block.get("edges") or [])
+		page_info = page_block.get("pageInfo") or {}
+
+	product["variants"] = {"edges": edges}
 	return _normalize_gql_product(product)
 
 
